@@ -1,5 +1,7 @@
 # dsh-worktree-env
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/dsh-worktree-env)](https://www.npmjs.com/package/dsh-worktree-env) [![npm downloads](https://img.shields.io/npm/dm/dsh-worktree-env?style=flat-square&color=orange)](https://www.npmjs.com/package/dsh-worktree-env) [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/leezhian/dsh-worktree-env)
+
 [English](README.md) | 简体中文
 
 DeepSeek Harness (DSH) 原生 Worktree 增强插件，在 DSH 内置 Git 工作树能力之上补齐本地环境编排与全生命周期管理。
@@ -49,16 +51,22 @@ git config --local dsh.localEnvironmentConfigPath .agents/environments/custom.to
 git config --local dsh.localEnvironmentConfigPath __none__
 ```
 
-## 本地测试与安装
+## 安装与本地开发
 
 ```bash
+# 从 npm 安装
+dsh plugin --profile web add dsh-worktree-env
+
+# 或直接从 GitHub 安装
+dsh plugin --profile web add github:leezhian/dsh-worktree-env
+
 # 运行全部单元测试（零第三方依赖）
 node --test tests/*.test.js
 
 # 叠加到本地 DSH Web profile 调试
 dsh web --patch ./cordis.patch.yml
 
-# 安装到指定 profile
+# 从本地源码目录安装
 dsh plugin --profile web add .
 ```
 

@@ -1,5 +1,7 @@
 # dsh-worktree-env
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![npm](https://img.shields.io/npm/v/dsh-worktree-env)](https://www.npmjs.com/package/dsh-worktree-env) [![npm downloads](https://img.shields.io/npm/dm/dsh-worktree-env?style=flat-square&color=orange)](https://www.npmjs.com/package/dsh-worktree-env) [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/leezhian/dsh-worktree-env)
+
 English | [简体中文](README.zh.md)
 
 Native worktree enhancement plugin for **DeepSeek Harness (DSH)**, adding local environment orchestration and full lifecycle management on top of DSH's built-in Git worktree support.
@@ -49,16 +51,22 @@ git config --local dsh.localEnvironmentConfigPath .agents/environments/custom.to
 git config --local dsh.localEnvironmentConfigPath __none__
 ```
 
-## Local Development & Installation
+## Installation & Local Development
 
 ```bash
+# Install from npm
+dsh plugin --profile web add dsh-worktree-env
+
+# Or install directly from GitHub
+dsh plugin --profile web add github:leezhian/dsh-worktree-env
+
 # Run all unit tests (zero external dependencies)
 node --test tests/*.test.js
 
 # Load into a local DSH Web profile for debugging
 dsh web --patch ./cordis.patch.yml
 
-# Install into a DSH profile
+# Install from a local checkout
 dsh plugin --profile web add .
 ```
 

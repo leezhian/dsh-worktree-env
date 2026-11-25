@@ -1,9 +1,25 @@
 {
   "name": "dsh-worktree-env",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Worktree enhancements for DeepSeek Harness: local environments (setup/cleanup/actions), uncommitted-change handoff, three-way patch backflow, lossless snapshot archiving, and quota cleanup.",
+  "license": "MIT",
+  "author": "kim",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leezhian/dsh-worktree-env.git"
+  },
+  "homepage": "https://github.com/leezhian/dsh-worktree-env#readme",
+  "bugs": {
+    "url": "https://github.com/leezhian/dsh-worktree-env/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "worktree",
+    "git"
+  ],
   "icon": "./icon.svg",
   "exports": {
     ".": "./src/index.js",
@@ -18,6 +34,7 @@
     "locale",
     "docs",
     "icon.svg",
+    "LICENSE",
     "README.md",
     "README.zh.md"
   ],
