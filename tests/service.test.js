@@ -216,6 +216,7 @@ test('updateConfig syncs relative worktreeDirectory to built-in configEditor, re
     await service.updateConfig({
       worktreeDirectory: '.worktrees',
       upstreamRefreshMode: 'best-effort',
+      autoCleanupEnabled: true,
       keepCount: 1,
       confirmBeforeDelete: false,
     }, { configFilePath: cfgPath })
@@ -227,9 +228,16 @@ test('updateConfig syncs relative worktreeDirectory to built-in configEditor, re
     assert.deepEqual(saved, {
       worktreeDirectory: '.worktrees',
       upstreamRefreshMode: 'best-effort',
+      autoCleanupEnabled: true,
       keepCount: 1,
       confirmBeforeDelete: false,
     })
+
+    // Toggling autoCleanupEnabled off persists and pauses quota cleanup
+    await service.updateConfig({ autoCleanupEnabled: false }, { configFilePath: cfgPath })
+    assert.equal(JSON.parse(await readFile(cfgPath, 'utf8')).autoCleanupEnabled, false)
+    assert.deepEqual(await service.enforceQuota(), { archived: 0 })
+    await service.updateConfig({ autoCleanupEnabled: true }, { configFilePath: cfgPath })
 
     // Clearing resets built-in override back to default (.agents/worktrees)
     await service.updateConfig({ worktreeDirectory: '' }, { configFilePath: cfgPath })
@@ -368,6 +376,159 @@ test('sessionActions and startActionForDirectory work in both regular repos and 
     assert.equal(wtInfo.branch, 'feat-act')
     assert.equal(wtInfo.actions.length, 1)
     assert.equal(wtInfo.actions[0].name, 'hello')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('handleSessionArchived snapshots dirty worktree, reopened session auto-detects archived worktree, and restore recovers work losslessly', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-reopen-')))
+  try {
+    await initRepo(dir)
+    await writeEnvConfig(join(dir, '.agents', 'environments', 'environment.toml'), {
+      name: 'RestoreDemo',
+      actions: [{ name: 'dev', icon: 'run', command: 'echo dev', platform: null }],
+    })
+    const baseCommit = (await run('git', ['-C', dir, 'rev-parse', 'HEAD'])).stdout.trim()
+    const wtPath = join(dir, '.agents', 'worktrees', 'feat-snap')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-snap', wtPath])
+
+    // Uncommitted edit + untracked file inside the worktree
+    await writeFile(join(wtPath, 'file.txt'), 'wip-edit\n', 'utf8')
+    await writeFile(join(wtPath, 'draft.txt'), 'untracked-wip\n', 'utf8')
+
+    const ctx = makeCtx({ workspaceRegistry: { list: () => [{ path: dir }], pinnedSessionIds: [] } })
+    const service = new WorktreeEnhanceService(ctx, normalizeConfig({ autoRunSetup: false, autoRunCleanup: false, keepCount: 15 }))
+    await service.registerCreated({ path: wtPath, branch: 'feat-snap', baseCommit, repositoryRoot: dir, sessionId: 'sess-old-1' }, { runSetup: false })
+
+    // Archiving the session snapshots uncommitted changes and frees the worktree directory
+    const res = await service.handleSessionArchived('sess-old-1')
+    assert.equal(res.archived, 1)
+    const archivedRec = await service.requireRecord(wtPath)
+    assert.equal(archivedRec.status, 'archived')
+    assert.ok(archivedRec.snapshotRef, 'expected hidden recovery snapshot ref')
+
+    // Cold service (no in-memory commonDirs) reopening the old session auto-detects the archived worktree
+    const coldService = new WorktreeEnhanceService(makeCtx(), normalizeConfig({ autoRunSetup: false, autoRunCleanup: false }))
+    const reopened = await coldService.sessionActions('sess-old-1', wtPath)
+    assert.equal(reopened.inWorktree, true)
+    assert.ok(reopened.archivedWorktree, 'reopened session should detect archivedWorktree')
+    assert.equal(reopened.archivedWorktree.id, wtPath)
+    assert.equal(reopened.archivedWorktree.branch, 'feat-snap')
+    assert.equal(reopened.archivedWorktree.hasSnapshot, true)
+
+    // Restoring recovers both edited and untracked files, removes consumed snapshot ref, and restores actions
+    const restored = await coldService.restore(wtPath, undefined, undefined, { runSetup: false })
+    assert.equal(restored.restored, true)
+    assert.equal(restored.snapshotRestored?.applied, true)
+    assert.equal(await readFile(join(wtPath, 'file.txt'), 'utf8'), 'wip-edit\n')
+    assert.equal(await readFile(join(wtPath, 'draft.txt'), 'utf8'), 'untracked-wip\n')
+
+    const refsAfter = (await run('git', ['-C', dir, 'for-each-ref', 'refs/dsh-worktree-env/snapshots'])).stdout.trim()
+    assert.equal(refsAfter, '', 'consumed snapshot ref should be cleaned up after lossless restore')
+
+    const activeAgain = await coldService.sessionActions('sess-old-1', wtPath)
+    assert.equal(activeAgain.archivedWorktree, null)
+    assert.equal(activeAgain.actions.length, 1)
+    assert.equal(activeAgain.actions[0].name, 'dev')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('backflowInfo and applyBackflow support target branch selection, dirty-source protection, ref precheck, and new branch creation', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-branchsel-')))
+  try {
+    await initRepo(dir)
+    const baseCommit = (await run('git', ['-C', dir, 'rev-parse', 'HEAD'])).stdout.trim()
+    // Create a worktree 'feat-login' from main and modify a file there
+    const wtPath = join(dir, '.agents', 'worktrees', 'feat-login')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-login', wtPath])
+    await writeFile(join(wtPath, 'login.txt'), 'login-feature\n', 'utf8')
+
+    // Switch main directory to 'feat-logout' (different branch!) and leave uncommitted edit
+    await run('git', ['-C', dir, 'checkout', '-q', '-b', 'feat-logout'])
+    await writeFile(join(dir, 'logout.txt'), 'wip-logout\n', 'utf8')
+
+    const service = new WorktreeEnhanceService(makeCtx(), normalizeConfig({ autoRunSetup: false }))
+    await service.registerCreated({ path: wtPath, branch: 'feat-login', baseCommit, repositoryRoot: dir }, { runSetup: false })
+
+    // 1. backflowInfo reports currentBranch='feat-logout', sourceDirty=true, excludes 'feat-login' (locked by worktree)
+    const info = await service.backflowInfo(wtPath)
+    assert.equal(info.currentBranch, 'feat-logout')
+    assert.equal(info.sourceDirty, true)
+    assert.equal(info.sourceDirtyCount, 1)
+    assert.deepEqual(info.branches, ['feat-logout', 'main'])
+
+    // 2. Trying to switch to 'main' while 'feat-logout' is dirty is blocked safely
+    const blocked = await service.applyBackflow(wtPath, { mode: 'branch', dryRun: true, targetBranch: 'main' })
+    assert.equal(blocked.applied, false)
+    assert.equal(blocked.blockedReason, 'SOURCE_DIRTY_CANNOT_SWITCH')
+
+    // Commit 'logout.txt' on feat-logout so main checkout becomes clean (ignoring .agents/worktrees)
+    await run('git', ['-C', dir, 'add', 'logout.txt'])
+    await run('git', ['-C', dir, 'commit', '-q', '-m', 'logout wip'])
+
+    // 3. Dry-run precheck against 'main' must NOT switch main directory off 'feat-logout'
+    const dry = await service.applyBackflow(wtPath, { mode: 'branch', dryRun: true, targetBranch: 'main' })
+    assert.equal(dry.applied, false)
+    assert.equal(dry.fileCount, 1)
+    assert.deepEqual(dry.conflicts, [])
+    assert.equal(dry.willSwitchBranch, true)
+    assert.equal((await run('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim(), 'feat-logout')
+
+    // 4. Actual apply to 'main' switches main checkout to 'main' and applies login.txt cleanly
+    const appliedMain = await service.applyBackflow(wtPath, { mode: 'branch', dryRun: false, targetBranch: 'main' })
+    assert.equal(appliedMain.applied, true)
+    assert.equal(appliedMain.targetBranch, 'main')
+    assert.equal(appliedMain.switchedBranch, true)
+    assert.equal((await run('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim(), 'main')
+    assert.equal(await readFile(join(dir, 'login.txt'), 'utf8'), 'login-feature\n')
+
+    // 5. Reset applied login.txt (git apply --3way stages new files) and test creating a brand new target branch
+    await run('git', ['-C', dir, 'reset', '--hard', '-q', 'HEAD'])
+    const dup = await service.applyBackflow(wtPath, { mode: 'branch', dryRun: true, targetBranch: 'main', createBranch: true })
+    assert.equal(dup.blockedReason, 'BRANCH_ALREADY_EXISTS')
+    const appliedNew = await service.applyBackflow(wtPath, { mode: 'branch', dryRun: false, targetBranch: 'feat/login-local', createBranch: true })
+    assert.equal(appliedNew.applied, true)
+    assert.equal(appliedNew.createdBranch, true)
+    assert.equal((await run('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim(), 'feat/login-local')
+    assert.equal(await readFile(join(dir, 'login.txt'), 'utf8'), 'login-feature\n')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('unarchiving cancels pending archive cleanup and clean worktrees removed by DSH built-in cleanup remain restorable', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-unarch-')))
+  try {
+    await initRepo(dir)
+    const baseCommit = (await run('git', ['-C', dir, 'rev-parse', 'HEAD'])).stdout.trim()
+    const wtPath = join(dir, '.agents', 'worktrees', 'feat-clean')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-clean', wtPath])
+
+    const ctx = makeCtx({ workspaceRegistry: { list: () => [{ path: dir }], pinnedSessionIds: [] } })
+    const service = new WorktreeEnhanceService(ctx, normalizeConfig({ autoRunSetup: false, autoRunCleanup: false }))
+    await service.registerCreated({ path: wtPath, branch: 'feat-clean', baseCommit, repositoryRoot: dir, sessionId: 'sess-u1' }, { runSetup: false })
+
+    // 1. Unarchiving aborts handleSessionArchived before removing the worktree
+    service.markSessionUnarchiving('sess-u1')
+    const aborted = await service.handleSessionArchived('sess-u1')
+    assert.equal(aborted.cancelled, true)
+    assert.equal(aborted.archived, 0)
+    assert.equal((await service.requireRecord(wtPath)).status, 'active')
+
+    // 2. Simulate DSH built-in cleanup removing a clean checkout before our plugin runs
+    await run('git', ['-C', dir, 'worktree', 'remove', wtPath])
+    const reopened = await service.sessionActions('sess-u1', wtPath)
+    assert.ok(reopened.archivedWorktree, 'clean checkout removed by built-in cleanup should still be auto-detected for restore')
+    assert.equal(reopened.archivedWorktree.branch, 'feat-clean')
+    assert.equal(reopened.archivedWorktree.hasSnapshot, false)
+
+    // Restore brings the checkout back cleanly
+    const restored = await service.restore(wtPath, undefined, undefined, { runSetup: false })
+    assert.equal(restored.restored, true)
+    assert.equal(await readFile(join(wtPath, 'file.txt'), 'utf8'), 'v1\n')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

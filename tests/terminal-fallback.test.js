@@ -428,3 +428,168 @@ test('Tier 3: falls back to floating shell.overlay LogDrawer when both terminal 
   const overlay = harness.renderOverlay()
   assert.ok(overlay !== null, 'floating overlay should open as final fallback')
 })
+
+test('Reopened archived worktree session auto-shows Restore button in top bar and removes Archive button from session menu', async () => {
+  const source = await readFile(join(ROOT, 'client.js'), 'utf8')
+  const stateSlots = []
+  const effectSlots = []
+  const refSlots = []
+  let cursor = 0
+  let effectCursor = 0
+  let refCursor = 0
+  let loadedModule = null
+
+  const mockReact = {
+    Fragment: Symbol('Fragment'),
+    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState: (init) => {
+      const idx = cursor++
+      if (!(idx in stateSlots)) stateSlots[idx] = typeof init === 'function' ? init() : init
+      const setter = (next) => {
+        stateSlots[idx] = typeof next === 'function' ? next(stateSlots[idx]) : next
+      }
+      return [stateSlots[idx], setter]
+    },
+    useEffect: (fn, deps) => {
+      const idx = effectCursor++
+      const prev = effectSlots[idx]
+      const changed = !prev || !deps || !prev.deps || deps.length !== prev.deps.length || deps.some((d, i) => d !== prev.deps[i])
+      if (changed) {
+        if (typeof prev?.cleanup === 'function') prev.cleanup()
+        effectSlots[idx] = { deps, cleanup: fn() }
+      }
+    },
+    useMemo: (fn) => fn(),
+    useRef: (init) => {
+      const idx = refCursor++
+      if (!(idx in refSlots)) refSlots[idx] = { current: init }
+      return refSlots[idx]
+    },
+    useCallback: (fn) => fn,
+  }
+
+  let restored = false
+  const fetchCalls = []
+  const sandbox = {
+    window: {
+      __ModuleLoader__: {
+        load(spec) {
+          loadedModule = spec.factory((id) => {
+            if (id === 'react') return mockReact
+            throw new Error(`unexpected require: ${id}`)
+          })
+        },
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    fetch: async (url, init) => {
+      fetchCalls.push({ url, init })
+      if (url.includes('/restore')) {
+        restored = true
+        return { ok: true, status: 200, text: async () => JSON.stringify({ restored: true }) }
+      }
+      if (url.includes('/session-actions')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(restored
+            ? { cwd: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', inWorktree: true, archivedWorktree: null, actions: [{ name: 'dev', icon: 'run', command: 'npm run dev' }], activeOperations: [] }
+            : { cwd: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', inWorktree: true, archivedWorktree: { id: '/repo/.agents/worktrees/feat-1', path: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', hasSnapshot: true }, actions: [], activeOperations: [] }),
+        }
+      }
+      if (url.endsWith('/worktrees')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            items: [{
+              id: '/repo/.agents/worktrees/feat-1',
+              path: '/repo/.agents/worktrees/feat-1',
+              branch: 'feat-1',
+              status: restored ? 'active' : 'archived',
+              createdSessionId: 'sess-arch-1',
+              sessions: restored ? [{ sessionId: 'sess-arch-1' }] : [],
+            }],
+          }),
+        }
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify({}) }
+    },
+    navigator: { language: 'zh-CN', languages: ['zh-CN'] },
+    document: { documentElement: { lang: 'zh-CN' }, addEventListener() {}, removeEventListener() {} },
+    console,
+    setTimeout,
+    clearTimeout,
+    encodeURIComponent,
+  }
+  vm.runInNewContext(source, sandbox, { filename: 'client.js' })
+
+  const registeredSlots = []
+  const localeService = {
+    register: () => () => {},
+    bind: () => (k, p) => (p?.branch ? `${k}:${p.branch}` : k),
+    getSnapshot: () => ({ active: 'zh', revision: 1 }),
+    subscribe: () => () => {},
+  }
+  const ctx = {
+    locale: localeService,
+    get: (key) => (key === 'locale' ? localeService : undefined),
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+    on: () => () => {},
+    slots: {
+      inject: (_n, fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+      register: (meta, component) => { registeredSlots.push({ meta, component }); return () => {} },
+    },
+  }
+  loadedModule.apply(ctx)
+
+  const headerSlot = registeredSlots.find(s => s.meta.name === 'conversation.session.header.utilities')
+  const menuSlot = registeredSlots.find(s => s.meta.name === 'sidebar.workspaces.session.menu.item')
+
+  const renderHeader = () => {
+    cursor = 0; effectCursor = 0; refCursor = 0
+    return headerSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' })
+  }
+  renderHeader()
+  await new Promise(r => setTimeout(r, 10))
+  const archivedTree = renderHeader()
+  const restoreBtns = findNodes(archivedTree, n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-hdr-restore'))
+  assert.equal(restoreBtns.length, 1, 'archived worktree session should auto-show Restore button in top bar')
+
+  const renderMenu = () => {
+    cursor = 50; effectCursor = 50; refCursor = 50
+    return menuSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' })
+  }
+
+  // Before restoring: session menu shows Restore worktree (no Archive button)
+  renderMenu()
+  await new Promise(r => setTimeout(r, 10))
+  const archivedMenuButtons = findNodes(renderMenu(), n => n.type === 'button' && n.props?.role === 'menuitem')
+  assert.equal(archivedMenuButtons.length, 1, 'archived worktree session menu should show only Restore worktree')
+  assert.equal(archivedMenuButtons[0].children[1], '恢复工作树')
+
+  // Click Restore -> calls POST .../restore and flips back to quick actions
+  restoreBtns[0].props.onClick()
+  await new Promise(r => setTimeout(r, 20))
+  const restoredTree = renderHeader()
+  assert.equal(findNodes(restoredTree, n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-hdr-restore')).length, 0)
+  assert.equal(findNodes(restoredTree, n => n.type === 'button' && n.props?.className === 'dshwt-hdr-btn').length, 1)
+  assert.equal(fetchCalls.filter(c => c.url.includes('/restore')).length, 1)
+
+  // After restoring: notifyEnvChanged() updates the session menu automatically -> shows only Apply changes (no Archive button)
+  renderMenu()
+  await new Promise(r => setTimeout(r, 10))
+  const activeMenuButtons = findNodes(renderMenu(), n => n.type === 'button' && n.props?.role === 'menuitem')
+  assert.equal(activeMenuButtons.length, 1, 'active worktree session menu should only show Apply changes (no Archive button)')
+  assert.equal(activeMenuButtons[0].children[1], '应用改动到主目录')
+
+  // Clicking Apply opens the native ApplyBackflowModal in shell.overlay (branch selection modal)
+  const overlaySlot = registeredSlots.find(s => s.meta.name === 'shell.overlay')
+  cursor = 100; effectCursor = 100; refCursor = 100
+  assert.equal(overlaySlot.component(), null)
+  activeMenuButtons[0].props.onClick()
+  cursor = 100; effectCursor = 100; refCursor = 100
+  const overlayTree = overlaySlot.component()
+  assert.ok(overlayTree !== null, 'clicking Apply changes should open ApplyBackflowModal in shell.overlay')
+})

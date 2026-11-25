@@ -7,7 +7,7 @@
  * @module
  */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,7 +18,7 @@ import { join } from 'node:path'
  * @param {string} root - checkout root.
  * @param {AbortSignal} [signal] - cancellation.
  * @param {string} [baseline] - commit or ref to diff against (default `'HEAD'`).
- * @returns {Promise<{ patch: string | null, fileCount: number }>} unified `--binary` patch (null when clean).
+ * @returns {Promise<{ patch: string | null, fileCount: number, files: string[] }>} unified `--binary` patch (null when clean).
  */
 export async function packageWorkingTree(git, root, signal, baseline = 'HEAD') {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-worktree-pkg-'))
@@ -29,10 +29,11 @@ export async function packageWorkingTree(git, root, signal, baseline = 'HEAD') {
     await git.check(root, ['add', '-A', '--', '.'], { env, signal })
     const tree = (await git.check(root, ['write-tree'], { env, signal })).trim()
     const baseTree = (await git.check(root, ['rev-parse', `${baseline}^{tree}`], { signal })).trim()
-    if (tree === baseTree) return { patch: null, fileCount: 0 }
+    if (tree === baseTree) return { patch: null, fileCount: 0, files: [] }
     const patch = await git.check(root, ['diff-tree', '-p', '--binary', '--no-commit-id', baseTree, tree], { env, signal })
     const count = await git.run(root, ['diff-tree', '--no-commit-id', '--name-only', '-r', baseTree, tree], { env, signal })
-    return { patch: patch.length > 0 ? patch : null, fileCount: count.stdout.split('\n').filter(Boolean).length }
+    const files = count.stdout.split('\n').filter(Boolean)
+    return { patch: patch.length > 0 ? patch : null, fileCount: files.length, files }
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
@@ -46,17 +47,59 @@ export async function packageWorkingTree(git, root, signal, baseline = 'HEAD') {
  * @param {{ path: string, baseCommit: string }} worktree - checkout directory and baseline.
  * @param {'branch' | 'uncommitted'} mode - committed-plus-uncommitted, or uncommitted only.
  * @param {AbortSignal} [signal] - cancellation.
- * @returns {Promise<{ patches: { name: string, text: string }[], fileCount: number }>}
+ * @returns {Promise<{ patches: { name: string, text: string }[], fileCount: number, files: string[] }>}
  */
 export async function backflowPatch(git, worktree, mode, signal) {
   const baseline = mode === 'branch' ? worktree.baseCommit : 'HEAD'
   const packaged = await packageWorkingTree(git, worktree.path, signal, baseline)
   if (packaged.patch === null) {
-    return { patches: [], fileCount: 0 }
+    return { patches: [], fileCount: 0, files: [] }
   }
   return {
     patches: [{ name: `${mode}.patch`, text: packaged.patch }],
     fileCount: packaged.fileCount,
+    files: packaged.files,
+  }
+}
+
+/**
+ * Precheck patches against an arbitrary Git ref (e.g. a different local branch)
+ * without touching the user's real checkout directory. Only the touched files
+ * are materialized into a temporary working tree so even huge repos stay fast.
+ * @param {import('./git.js').GitRunner} git - runner.
+ * @param {string} commonDir - repository `.git` common directory.
+ * @param {string} targetRef - target ref such as `refs/heads/main`.
+ * @param {{ name: string, text: string }[]} patches - patch payloads.
+ * @param {string[]} touchedFiles - repo-relative file paths touched by the patches.
+ * @param {AbortSignal} [signal] - cancellation.
+ * @returns {Promise<{ ok: boolean, conflicts: string[] }>}
+ */
+export async function precheckPatchesOnRef(git, commonDir, targetRef, patches, touchedFiles, signal) {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-refchk-'))
+  const workDir = join(dir, 'work')
+  const indexFile = join(dir, 'index')
+  try {
+    await mkdir(workDir, { recursive: true })
+    const env = { GIT_DIR: commonDir, GIT_WORK_TREE: workDir, GIT_INDEX_FILE: indexFile }
+    await git.check(workDir, ['read-tree', targetRef], { env, signal })
+    if (Array.isArray(touchedFiles) && touchedFiles.length > 0) {
+      const listed = await git.run(workDir, ['ls-tree', '-r', '--name-only', targetRef, '--', ...touchedFiles], { env, allowedExitCodes: [0, 128], signal })
+      const present = listed.stdout.split('\n').filter(Boolean)
+      if (present.length > 0) {
+        await git.check(workDir, ['checkout-index', '-f', '--', ...present], { env, signal })
+      }
+    }
+    /** @type {string[]} */
+    const conflicts = []
+    for (const patch of patches) {
+      const file = join(dir, `pre-${patch.name}`)
+      await writeFile(file, patch.text, 'utf8')
+      const result = await git.run(workDir, ['apply', '--check', '--3way', '--', file], { env, allowedExitCodes: [0, 1, 128], signal })
+      if (result.exitCode !== 0) conflicts.push(...conflictFiles(result.stderr, patch.name))
+    }
+    return { ok: conflicts.length === 0, conflicts }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
 }
 

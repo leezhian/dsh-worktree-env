@@ -13,7 +13,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { GitRunner, parseWorktreeList, repoInfo } from './git.js'
 import { classifyManagedEnvPath, discoverEnvConfig, listEnvConfigs, parseGitRemoteOwner, preferredConfigPath, readEnvConfigFile, writeEnvConfig } from './env-config.js'
 import { EnvRunner } from './env-runner.js'
-import { applyPatches, backflowPatch, fetchUpstream, packageWorkingTree, precheckPatches } from './transfer.js'
+import { applyPatches, backflowPatch, fetchUpstream, packageWorkingTree, precheckPatches, precheckPatchesOnRef } from './transfer.js'
 import { deleteSnapshot, directorySize, isClean, nestedRepositoryFindings, restoreSnapshot, writeSnapshot } from './snapshot.js'
 import { storeOf } from './store.js'
 
@@ -71,6 +71,63 @@ export class WorktreeEnhanceService {
     this.describeCache = new Map()
     /** repository root → cached creation preference. */
     this.preferenceCache = new Map()
+    /** Sessions currently being unarchived (cancels pending/in-flight archive cleanup). */
+    this.unarchivingSessions = new Set()
+  }
+
+  /**
+   * Mark a session as unarchiving so any pending or in-flight archive cleanup
+   * for its worktree is aborted cleanly.
+   * @param {string | null | undefined} sessionId
+   */
+  markSessionUnarchiving(sessionId) {
+    if (typeof sessionId === 'string' && sessionId.length > 0) {
+      this.unarchivingSessions.add(sessionId)
+    }
+  }
+
+  /**
+   * Clear the unarchiving flag when a session is archived again.
+   * @param {string | null | undefined} sessionId
+   */
+  clearSessionUnarchiving(sessionId) {
+    if (typeof sessionId === 'string' && sessionId.length > 0) {
+      this.unarchivingSessions.delete(sessionId)
+    }
+  }
+
+  /**
+   * Reconcile a worktree removed externally (e.g. clean checkout removed by
+   * DSH's built-in `dsh-experimental-worktree` archive handler) so reopening
+   * its session still surfaces the one-click Restore button.
+   * @param {string} worktreePath
+   * @param {string | null | undefined} [sessionId]
+   */
+  async markExternallyRemoved(worktreePath, sessionId) {
+    if (typeof worktreePath !== 'string' || worktreePath.length === 0) return false
+    const absPath = resolve(worktreePath)
+    const exists = await access(absPath, constants.F_OK).then(() => true, () => false)
+    if (exists) return false
+    let record
+    try {
+      record = await this.requireRecord(absPath)
+    } catch {
+      return false
+    }
+    const store = await this.storeOfRecord(record)
+    const patch = {}
+    if (record.status !== 'archived') {
+      patch.status = 'archived'
+      patch.archivedAt = record.archivedAt ?? Date.now()
+    }
+    if (typeof sessionId === 'string' && sessionId.length > 0 && record.createdSessionId === null) {
+      patch.createdSessionId = sessionId
+    }
+    if (Object.keys(patch).length > 0) {
+      await store.patch(record.id, patch)
+    }
+    this.knownPaths.delete(record.path)
+    return true
   }
 
   /** @returns {import('@deepseek-ai/dsh-experimental-worktree').WorktreeService | undefined} */
@@ -303,28 +360,128 @@ export class WorktreeEnhanceService {
   }
 
   /**
+   * Locate the enclosing Git repository for a path even if the leaf directory
+   * has already been removed (e.g. an archived worktree path).
+   * @param {string} targetPath
+   */
+  async findRepoInfoAscending(targetPath) {
+    let cur = resolve(targetPath)
+    for (let depth = 0; depth < 8; depth += 1) {
+      const exists = await access(cur, constants.F_OK).then(() => true, () => false)
+      if (exists) {
+        const info = await repoInfo(this.git, cur).catch(() => null)
+        if (info !== null) return info
+      }
+      const parent = dirname(cur)
+      if (parent === cur) break
+      cur = parent
+    }
+    return null
+  }
+
+  /**
+   * Look up an archived worktree record associated with a session (by its
+   * last working directory or recorded `createdSessionId`).
+   * @param {string | null | undefined} sessionId
+   * @param {string | null} dir
+   * @returns {Promise<import('./store.js').WorktreeRecord | null>}
+   */
+  async findArchivedWorktree(sessionId, dir) {
+    const candidates = new Set(this.commonDirs)
+    if (typeof dir === 'string' && dir.length > 0) {
+      const info = await this.findRepoInfoAscending(dir)
+      if (info !== null) {
+        this.commonDirs.add(info.commonDir)
+        candidates.add(info.commonDir)
+      }
+    }
+    for (const workspaceHint of this.workspaceRoots()) {
+      const repo = await repoInfo(this.git, workspaceHint).catch(() => null)
+      if (repo !== null) {
+        this.commonDirs.add(repo.commonDir)
+        candidates.add(repo.commonDir)
+      }
+    }
+    let sessionMatch = null
+    for (const commonDir of candidates) {
+      const store = storeOf(commonDir)
+      const records = await store.list()
+      for (const record of records) {
+        let isArchived = record.status === 'archived'
+        if (!isArchived && record.status === 'active') {
+          const onDisk = await access(record.path, constants.F_OK).then(() => true, () => false)
+          if (!onDisk) {
+            // Reconcile clean worktrees removed by DSH's built-in cleanup so they remain restorable.
+            const archivedAt = record.archivedAt ?? Date.now()
+            await store.patch(record.id, { status: 'archived', archivedAt }).catch(() => {})
+            record.status = 'archived'
+            record.archivedAt = archivedAt
+            this.knownPaths.delete(record.path)
+            isArchived = true
+          }
+        }
+        if (!isArchived) continue
+        if (typeof dir === 'string' && dir.length > 0 && (record.path === dir || dir.startsWith(`${record.path}/`))) {
+          return record
+        }
+        if (sessionMatch === null && typeof sessionId === 'string' && sessionId.length > 0 && record.createdSessionId === sessionId) {
+          sessionMatch = record
+        }
+      }
+    }
+    return sessionMatch
+  }
+
+  /**
    * Describe quick actions available for one session (works in both managed
-   * worktrees and regular local project checkouts).
+   * worktrees and regular local project checkouts, and surfaces archived
+   * worktrees so reopened sessions can offer one-click restoration).
    * @param {string | null | undefined} sessionId
    * @param {string | null | undefined} fallbackCwd
    */
   async sessionActions(sessionId, fallbackCwd) {
     const dir = this.sessionDirectory(sessionId, fallbackCwd)
-    if (dir === null) {
-      return {
-        cwd: null, repositoryRoot: null, branch: null, inWorktree: false, worktreeId: null,
-        envName: null, envSourcePath: null, actions: [], activeOperations: [],
+    const exists = dir !== null && await access(dir, constants.F_OK).then(() => true, () => false)
+    if (dir === null || !exists) {
+      const archived = await this.findArchivedWorktree(sessionId, dir)
+      if (archived !== null) {
+        return {
+          cwd: dir ?? archived.path,
+          repositoryRoot: archived.repositoryRoot,
+          branch: archived.branch,
+          inWorktree: true,
+          worktreeId: archived.id,
+          archivedWorktree: {
+            id: archived.id,
+            path: archived.path,
+            branch: archived.branch,
+            repositoryRoot: archived.repositoryRoot,
+            hasSnapshot: typeof archived.snapshotRef === 'string' && archived.snapshotRef.length > 0,
+            archivedAt: archived.archivedAt ?? null,
+          },
+          envName: null,
+          envSourcePath: null,
+          envFile: null,
+          actions: [],
+          activeOperations: [],
+        }
       }
-    }
-    const exists = await access(dir, constants.F_OK).then(() => true, () => false)
-    if (!exists) {
       return {
-        cwd: dir, repositoryRoot: null, branch: null, inWorktree: false, worktreeId: null,
-        envName: null, envSourcePath: null, actions: [], activeOperations: [],
+        cwd: dir, repositoryRoot: null, branch: null, inWorktree: false, worktreeId: null, archivedWorktree: null,
+        envName: null, envSourcePath: null, envFile: null, actions: [], activeOperations: [],
       }
     }
     const info = await repoInfo(this.git, dir)
     const covering = this.coveringWorktree(dir)
+    // Lazily associate the active session id with an adopted worktree record so
+    // archiving or reopening this session can snapshot-clean and auto-detect it.
+    if (covering !== null && typeof sessionId === 'string' && sessionId.length > 0) {
+      const store = storeOf(covering.commonDir)
+      const rec = await store.get(covering.path)
+      if (rec !== undefined && rec.createdSessionId === null) {
+        void store.patch(rec.id, { createdSessionId: sessionId, lastAccessedAt: Date.now() }).catch(() => {})
+      }
+    }
     const config = info !== null
       ? await discoverEnvConfig(this.git, dir)
       : ((await listEnvConfigs(null, dir)).environments.find(e => e.valid)?.environment ?? {
@@ -356,6 +513,7 @@ export class WorktreeEnhanceService {
       branch,
       inWorktree: covering !== null,
       worktreeId: covering?.path ?? null,
+      archivedWorktree: null,
       envName: config.name ?? null,
       envSourcePath: config.sourcePath ?? null,
       envFile: envFilePath !== null && existsSync(envFilePath) ? envFilePath : null,
@@ -536,6 +694,9 @@ export class WorktreeEnhanceService {
     if (patch.upstreamRefreshMode === 'never' || patch.upstreamRefreshMode === 'best-effort') {
       this.config.upstreamRefreshMode = patch.upstreamRefreshMode
     }
+    if (typeof patch.autoCleanupEnabled === 'boolean') {
+      this.config.autoCleanupEnabled = patch.autoCleanupEnabled
+    }
     if (typeof patch.keepCount === 'number' && Number.isFinite(patch.keepCount) && Math.floor(patch.keepCount) >= 1) {
       this.config.keepCount = Math.floor(patch.keepCount)
     }
@@ -566,6 +727,7 @@ export class WorktreeEnhanceService {
     await writeFile(file, JSON.stringify({
       worktreeDirectory: this.config.worktreeDirectory ?? '',
       upstreamRefreshMode: this.config.upstreamRefreshMode,
+      autoCleanupEnabled: this.config.autoCleanupEnabled,
       keepCount: this.config.keepCount,
       confirmBeforeDelete: this.config.confirmBeforeDelete,
     }, null, 2), 'utf8')
@@ -601,9 +763,75 @@ export class WorktreeEnhanceService {
   }
 
   /**
-   * Precheck or apply the backflow patch onto the source checkout.
+   * Inspect the source checkout's active branch and dirty file count, excluding
+   * DSH's own worktree pool directory so untracked `.agents/worktrees/` never
+   * falsely marks a clean repository as dirty.
+   * @param {string} root
+   * @param {AbortSignal} [signal]
+   */
+  async sourceCheckoutStatus(root, signal) {
+    const headRes = await this.git.run(root, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowedExitCodes: [0, 128], signal })
+    const rawHead = headRes.exitCode === 0 ? headRes.stdout.trim() : ''
+    const currentBranch = rawHead.length > 0 && rawHead !== 'HEAD' ? rawHead : null
+    const excludes = [`:(exclude)${DEFAULT_WORKTREE_DIRECTORY}`]
+    const dirState = this.worktreeDirectoryState()
+    if (typeof dirState.worktreeDirectory === 'string' && isValidRelativeDir(dirState.worktreeDirectory) && dirState.worktreeDirectory !== DEFAULT_WORKTREE_DIRECTORY) {
+      excludes.push(`:(exclude)${dirState.worktreeDirectory}`)
+    }
+    const statusRes = await this.git.run(root, ['status', '--porcelain', '--', '.', ...excludes], { allowedExitCodes: [0, 128], signal })
+    const dirtyLines = statusRes.exitCode === 0 ? statusRes.stdout.split('\n').filter(Boolean) : []
+    return {
+      currentBranch,
+      sourceDirty: dirtyLines.length > 0,
+      sourceDirtyCount: dirtyLines.length,
+    }
+  }
+
+  /**
+   * Describe the source checkout's current branch, cleanliness, and available
+   * target branches for applying changes back from a worktree.
+   * @param {string} id - worktree record id (or path).
+   * @param {AbortSignal} [signal] - cancellation.
+   */
+  async backflowInfo(id, signal) {
+    const record = await this.requireRecord(id)
+    const root = record.repositoryRoot
+    const { currentBranch, sourceDirty, sourceDirtyCount } = await this.sourceCheckoutStatus(root, signal)
+    const porcelain = await this.git.run(root, ['worktree', 'list', '--porcelain'], { allowedExitCodes: [0, 128], signal })
+    const lockedBranches = new Set()
+    if (porcelain.exitCode === 0) {
+      for (const entry of parseWorktreeList(porcelain.stdout)) {
+        if (entry.path !== root && typeof entry.branch === 'string' && entry.branch.length > 0) {
+          lockedBranches.add(entry.branch)
+        }
+      }
+    }
+    const refsRes = await this.git.run(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { allowedExitCodes: [0, 128], signal })
+    const allLocal = refsRes.exitCode === 0 ? refsRes.stdout.split('\n').filter(Boolean) : []
+    const available = allLocal.filter(name => name === currentBranch || !lockedBranches.has(name))
+    const priority = (name) => {
+      if (name === currentBranch) return 0
+      if (name === 'main') return 1
+      if (name === 'master') return 2
+      return 3
+    }
+    available.sort((a, b) => (priority(a) - priority(b)) || a.localeCompare(b))
+    return {
+      worktreeId: record.id,
+      worktreeBranch: record.branch,
+      repositoryRoot: root,
+      currentBranch,
+      sourceDirty,
+      sourceDirtyCount,
+      branches: available,
+    }
+  }
+
+  /**
+   * Precheck or apply the backflow patch onto the source checkout, optionally
+   * switching to (or creating) a chosen target branch first.
    * @param {string} id - record id.
-   * @param {{ mode?: 'branch' | 'uncommitted', dryRun?: boolean }} [options]
+   * @param {{ mode?: 'branch' | 'uncommitted', dryRun?: boolean, targetBranch?: string | null, createBranch?: boolean }} [options]
    * @param {AbortSignal} [signal] - cancellation.
    */
   async applyBackflow(id, options = {}, signal) {
@@ -611,16 +839,123 @@ export class WorktreeEnhanceService {
     const store = await this.storeOfRecord(record)
     return await this.git.serialized(store.commonDir, async () => {
       const mode = options.mode ?? 'branch'
-      const { patches, fileCount } = await backflowPatch(this.git, record, mode, signal)
+      const { patches, fileCount, files } = await backflowPatch(this.git, record, mode, signal)
+      const root = record.repositoryRoot
+      const { currentBranch, sourceDirty, sourceDirtyCount } = await this.sourceCheckoutStatus(root, signal)
+
+      const wantsCreate = options.createBranch === true
+      const rawTarget = typeof options.targetBranch === 'string' && options.targetBranch.trim().length > 0
+        ? options.targetBranch.trim()
+        : null
+      const targetBranch = rawTarget ?? currentBranch
+      const needsSwitch = wantsCreate || (targetBranch !== null && targetBranch !== currentBranch)
+
       if (patches.length === 0) {
-        return { applied: false, fileCount: 0, conflicts: [], message: 'No changes to apply.' }
+        return {
+          applied: false, fileCount: 0, conflicts: [], currentBranch, targetBranch,
+          sourceDirty, sourceDirtyCount, message: 'No changes to apply.',
+        }
       }
-      const precheck = await precheckPatches(this.git, record.repositoryRoot, patches, signal)
+
+      if (wantsCreate) {
+        if (rawTarget === null) {
+          return {
+            applied: false, fileCount, conflicts: [], blockedReason: 'INVALID_BRANCH_NAME',
+            currentBranch, targetBranch: null, sourceDirty, sourceDirtyCount,
+            message: 'New branch name is required.',
+          }
+        }
+        const fmt = await this.git.run(root, ['check-ref-format', '--branch', rawTarget], { allowedExitCodes: [0, 1, 128], signal })
+        if (fmt.exitCode !== 0) {
+          return {
+            applied: false, fileCount, conflicts: [], blockedReason: 'INVALID_BRANCH_NAME',
+            currentBranch, targetBranch: rawTarget, sourceDirty, sourceDirtyCount,
+            message: `Invalid branch name: ${rawTarget}`,
+          }
+        }
+        const exists = await this.git.run(root, ['show-ref', '--verify', '--quiet', `refs/heads/${rawTarget}`], { allowedExitCodes: [0, 1], signal })
+        if (exists.exitCode === 0) {
+          return {
+            applied: false, fileCount, conflicts: [], blockedReason: 'BRANCH_ALREADY_EXISTS',
+            currentBranch, targetBranch: rawTarget, sourceDirty, sourceDirtyCount,
+            message: `Branch already exists: ${rawTarget}`,
+          }
+        }
+      } else if (needsSwitch && targetBranch !== null) {
+        const exists = await this.git.run(root, ['show-ref', '--verify', '--quiet', `refs/heads/${targetBranch}`], { allowedExitCodes: [0, 1], signal })
+        if (exists.exitCode !== 0) {
+          return {
+            applied: false, fileCount, conflicts: [], blockedReason: 'BRANCH_NOT_FOUND',
+            currentBranch, targetBranch, sourceDirty, sourceDirtyCount,
+            message: `Target branch not found: ${targetBranch}`,
+          }
+        }
+        const porcelain = await this.git.run(root, ['worktree', 'list', '--porcelain'], { allowedExitCodes: [0, 128], signal })
+        if (porcelain.exitCode === 0) {
+          const inUse = parseWorktreeList(porcelain.stdout).some(entry => entry.path !== root && entry.branch === targetBranch)
+          if (inUse) {
+            return {
+              applied: false, fileCount, conflicts: [], blockedReason: 'BRANCH_IN_USE',
+              currentBranch, targetBranch, sourceDirty, sourceDirtyCount,
+              message: `Branch "${targetBranch}" is currently checked out in another worktree.`,
+            }
+          }
+        }
+      }
+
+      if (needsSwitch && sourceDirty) {
+        return {
+          applied: false, fileCount, conflicts: [], blockedReason: 'SOURCE_DIRTY_CANNOT_SWITCH',
+          currentBranch, targetBranch, sourceDirty, sourceDirtyCount,
+          message: `Source checkout has ${sourceDirtyCount} uncommitted change(s) on "${currentBranch ?? 'HEAD'}"; commit or stash them before switching branches.`,
+        }
+      }
+
+      const precheck = needsSwitch && !wantsCreate && targetBranch !== null
+        ? await precheckPatchesOnRef(this.git, store.commonDir, `refs/heads/${targetBranch}`, patches, files, signal)
+        : await precheckPatches(this.git, root, patches, signal)
+
       if (options.dryRun === true || !precheck.ok) {
-        return { applied: false, fileCount, conflicts: precheck.conflicts, message: options.dryRun === true ? 'Dry run: patches would apply cleanly.' : undefined }
+        return {
+          applied: false,
+          fileCount,
+          conflicts: precheck.conflicts,
+          currentBranch,
+          targetBranch,
+          sourceDirty,
+          sourceDirtyCount,
+          willSwitchBranch: needsSwitch,
+          createBranch: wantsCreate,
+          message: options.dryRun === true && precheck.ok ? 'Dry run: patches would apply cleanly.' : undefined,
+        }
       }
-      await applyPatches(this.git, record.repositoryRoot, patches, signal)
-      return { applied: true, fileCount, conflicts: [], message: `Applied ${fileCount} changed file(s) onto ${record.repositoryRoot}.` }
+
+      if (needsSwitch && targetBranch !== null) {
+        const prevRef = currentBranch ?? (await this.git.check(root, ['rev-parse', 'HEAD'], { signal })).trim()
+        await this.git.check(root, wantsCreate ? ['checkout', '-b', targetBranch] : ['checkout', targetBranch], { signal })
+        try {
+          await applyPatches(this.git, root, patches, signal)
+        } catch (error) {
+          await this.git.run(root, ['checkout', prevRef], { allowedExitCodes: [0, 1, 128] }).catch(() => {})
+          if (wantsCreate) {
+            await this.git.run(root, ['branch', '-D', targetBranch], { allowedExitCodes: [0, 1, 128] }).catch(() => {})
+          }
+          throw error
+        }
+      } else {
+        await applyPatches(this.git, root, patches, signal)
+      }
+
+      return {
+        applied: true,
+        fileCount,
+        conflicts: [],
+        currentBranch,
+        targetBranch,
+        switchedBranch: needsSwitch,
+        createdBranch: wantsCreate,
+        message: `Applied ${fileCount} changed file(s) onto ${root}${targetBranch ? ` (${targetBranch})` : ''}.`,
+      }
     })
   }
 
@@ -675,7 +1010,8 @@ export class WorktreeEnhanceService {
    */
   async restore(id, agent, signal, options = {}) {
     const record = await this.requireRecord(id)
-    if (record.status !== 'archived') return { restored: true, alreadyActive: true }
+    const existsOnDisk = await access(record.path, constants.F_OK).then(() => true, () => false)
+    if (record.status !== 'archived' && existsOnDisk) return { restored: true, alreadyActive: true }
     const store = await this.storeOfRecord(record)
     return await this.git.serialized(store.commonDir, async () => {
       const operation = this.runner.begin('restore', `${record.branch} · restore`, record.path)
@@ -691,16 +1027,22 @@ export class WorktreeEnhanceService {
           await this.git.check(record.repositoryRoot, args, { signal })
         }
         let snapshotRestored = null
+        let remainingSnapshotRef = null
         if (record.snapshotRef !== null) {
           const result = await restoreSnapshot(this.git, record.path, record.snapshotRef, signal)
           snapshotRestored = result
           this.runner.log(operation, 'meta', result.applied ? 'Snapshot restored into the worktree.\n' : `Snapshot restore failed: ${result.reason ?? 'unknown'}\n`)
+          if (result.applied) {
+            await deleteSnapshot(this.git, record.repositoryRoot, record.snapshotRef, signal).catch(() => {})
+          } else {
+            remainingSnapshotRef = record.snapshotRef
+          }
         }
         const envConfig = await discoverEnvConfig(this.git, record.path, signal)
         const hasSetup = envConfig.setup !== null
         await store.patch(record.id, {
           status: 'active',
-          snapshotRef: null,
+          snapshotRef: remainingSnapshotRef,
           archivedAt: null,
           lastAccessedAt: Date.now(),
           setupState: hasSetup ? 'none' : 'not-configured',
@@ -852,7 +1194,13 @@ export class WorktreeEnhanceService {
         const exists = await access(record.path, constants.F_OK).then(() => true, () => false)
         let changedFiles = null
         let clean = null
-        if (exists && record.status === 'active') {
+        if (!exists && record.status === 'active') {
+          const archivedAt = record.archivedAt ?? Date.now()
+          record.status = 'archived'
+          record.archivedAt = archivedAt
+          this.knownPaths.delete(record.path)
+          void store.patch(record.id, { status: 'archived', archivedAt }).catch(() => {})
+        } else if (exists && record.status === 'active') {
           const status = await this.git.run(record.path, ['status', '--porcelain'], { allowedExitCodes: [0, 128] })
           clean = status.exitCode === 0 ? status.stdout.trim().length === 0 : null
           changedFiles = status.exitCode === 0 ? status.stdout.split('\n').filter(Boolean).length : null
@@ -900,6 +1248,44 @@ export class WorktreeEnhanceService {
       }
     }
     return index
+  }
+
+  /**
+   * Handle DSH session archival: save a recovery snapshot and clean up the
+   * archived session's dedicated worktree (when not pinned, busy, or shared
+   * with another active session), then run quota enforcement.
+   * @param {string | null | undefined} sessionId
+   */
+  async handleSessionArchived(sessionId) {
+    let archived = 0
+    if (typeof sessionId === 'string' && sessionId.length > 0) {
+      if (this.unarchivingSessions.has(sessionId)) {
+        return { archived: 0, cancelled: true }
+      }
+      const { items } = await this.listAll()
+      const sessions = this.sessionIndex()
+      const pinnedSessions = new Set(this.ctx.get('workspaceRegistry')?.pinnedSessionIds ?? [])
+      if (!pinnedSessions.has(sessionId)) {
+        for (const item of items) {
+          if (this.unarchivingSessions.has(sessionId)) {
+            return { archived, cancelled: true }
+          }
+          if (item.status !== 'active' || !item.exists) continue
+          if (item.createdSessionId !== sessionId) continue
+          if (this.busyPaths.has(item.path)) continue
+          const liveOthers = (sessions.get(item.path) ?? []).filter(entry => entry.sessionId !== sessionId)
+          if (liveOthers.length > 0) continue
+          try {
+            await this.archive(item.id, { snapshot: true })
+            archived += 1
+          } catch {
+            // keep worktree intact if nested repos or git locks prevent removal
+          }
+        }
+      }
+    }
+    const quota = await this.enforceQuota()
+    return { archived: archived + quota.archived }
   }
 
   /**
@@ -1266,10 +1652,10 @@ export class WorktreeEnhanceService {
     const candidates = new Set(this.commonDirs)
     const covering = this.coveringWorktree(id)
     if (covering !== null) candidates.add(covering.commonDir)
-    const info = await repoInfo(this.git, id).catch(() => null)
+    const info = await this.findRepoInfoAscending(id)
     if (info !== null) {
+      this.commonDirs.add(info.commonDir)
       candidates.add(info.commonDir)
-      // the record's repository may differ from the checkout's own repo when id is a root
     }
     for (const workspaceHint of this.workspaceRoots()) {
       const repo = await repoInfo(this.git, workspaceHint).catch(() => null)

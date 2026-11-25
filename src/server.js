@@ -129,9 +129,19 @@ async function worktreeAction(req, res, service) {
     json(res, await service.startAction(id, name))
     return
   }
+  if (action === 'backflow-info') {
+    requireMethod(req, 'GET')
+    json(res, await service.backflowInfo(id))
+    return
+  }
   if (action === 'apply-patch') {
     requireMethod(req, 'POST')
-    json(res, await service.applyBackflow(id, { mode: body?.mode ?? 'branch', dryRun: body?.dryRun === true || body?.dryRun === undefined }))
+    json(res, await service.applyBackflow(id, {
+      mode: body?.mode ?? 'branch',
+      dryRun: body?.dryRun === true || body?.dryRun === undefined,
+      targetBranch: typeof body?.targetBranch === 'string' ? body.targetBranch : undefined,
+      createBranch: body?.createBranch === true,
+    }))
     return
   }
   if (action === 'archive') {

@@ -183,13 +183,58 @@ export function apply(ctx, rawConfig) {
     }
   }), 'dsh-worktree-env: session stop')
 
-  // Periodic quota enforcement (also runnable on demand via the API).
+  // Startup + periodic quota enforcement (matching Codex App startup & background cleanup).
+  ctx.effect(() => ctx.timer.timeout(() => {
+    void service.enforceQuota().catch(() => {})
+  }, 5000), 'dsh-worktree-env: startup quota sweep')
   ctx.effect(() => ctx.timer.interval(() => {
     void service.enforceQuota().catch(() => {})
   }, 30 * 60 * 1000), 'dsh-worktree-env: quota sweep')
-  ctx.effect(() => ctx.on('workspace/session-archived', () => {
-    ctx.timer.timeout(() => { void service.enforceQuota().catch(() => {}) }, 5000)
+
+  // Coordinate session archive & unarchive events so unarchiving cancels any
+  // pending archive cleanup, and reconcile clean worktrees removed by DSH's
+  // built-in worktree module so reopened sessions still offer Restore.
+  /** @type {Map<string, () => void>} */
+  const pendingArchiveTimers = new Map()
+  const extractSessionId = (payload) => (typeof payload === 'string'
+    ? payload
+    : (payload?.sessionId ?? payload?.id ?? payload?.session?.header?.id ?? null))
+  ctx.effect(() => () => {
+    for (const cancel of pendingArchiveTimers.values()) {
+      try { cancel() } catch { /* ignore */ }
+    }
+    pendingArchiveTimers.clear()
+  }, 'dsh-worktree-env: drain archive timers')
+  ctx.effect(() => ctx.on('workspace/session-archived', (payload) => {
+    const sessionId = extractSessionId(payload)
+    if (sessionId !== null) {
+      service.clearSessionUnarchiving(sessionId)
+      const prev = pendingArchiveTimers.get(sessionId)
+      if (typeof prev === 'function') prev()
+    }
+    const cancel = ctx.timer.timeout(() => {
+      if (sessionId !== null) pendingArchiveTimers.delete(sessionId)
+      void service.handleSessionArchived(sessionId).catch(() => {})
+    }, 1500)
+    if (sessionId !== null && typeof cancel === 'function') {
+      pendingArchiveTimers.set(sessionId, cancel)
+    }
   }), 'dsh-worktree-env: post-archive sweep')
+  ctx.effect(() => ctx.on('workspace/session-unarchiving', (payload) => {
+    const sessionId = extractSessionId(payload)
+    if (sessionId === null) return
+    service.markSessionUnarchiving(sessionId)
+    const cancel = pendingArchiveTimers.get(sessionId)
+    if (typeof cancel === 'function') {
+      cancel()
+      pendingArchiveTimers.delete(sessionId)
+    }
+  }), 'dsh-worktree-env: cancel archive on unarchive')
+  ctx.effect(() => ctx.on('worktree/cleanup', (payload) => {
+    if (payload?.cleanup?.status === 'removed' && typeof payload?.path === 'string') {
+      void service.markExternallyRemoved(payload.path, extractSessionId(payload)).catch(() => {})
+    }
+  }), 'dsh-worktree-env: reconcile built-in cleanup')
 
   // Initial index build so shellEnv/prompt context answer right after startup.
   void service.listAll().catch(() => {})
@@ -198,8 +243,8 @@ export function apply(ctx, rawConfig) {
   ctx.effect(() => ctx.commands.register({
     definitionId: 'dsh-worktree-env.command',
     name: 'worktree',
-    description: 'Worktree enhancements: handoff with uncommitted changes, backflow, archiving.',
-    input: { hint: 'status | handoff [name] | apply-patch [branch|uncommitted] | archive' },
+    description: 'Worktree enhancements: handoff with uncommitted changes, backflow, archiving, and snapshot restore.',
+    input: { hint: 'status | handoff [name] | apply-patch [branch|uncommitted] | restore [branch] | archive' },
     async handler(invocation) {
       const [verb, ...rest] = invocation.rawInput.trim().split(/\s+/)
       try {
@@ -216,6 +261,23 @@ export function apply(ctx, rawConfig) {
           if (precheck.conflicts.length > 0) return { kind: 'error', text: `Conflicts: ${precheck.conflicts.join('; ')}` }
           const applied = await service.applyBackflow(covering.path, { mode, dryRun: false }, invocation.signal)
           return { kind: 'success', text: applied.message ?? 'Applied.' }
+        }
+        if (verb === 'restore') {
+          const sessionId = invocation.agent?.session?.header?.id ?? null
+          const cwd = service.sessionDirectory(sessionId, invocation.agent?.session?.header?.cwd)
+          let target = null
+          if (typeof rest[0] === 'string' && rest[0].length > 0) {
+            const { items } = await service.listAll()
+            target = items.find(i => i.status === 'archived' && (i.branch === rest[0] || i.id === rest[0])) ?? null
+          } else {
+            target = await service.findArchivedWorktree(sessionId, cwd)
+          }
+          if (target === null) return { kind: 'error', text: 'No archived worktree found to restore.' }
+          const result = await service.restore(target.id, invocation.agent, invocation.signal)
+          return {
+            kind: 'success',
+            text: `Restored ${target.branch} at ${target.path}${result.snapshotRestored?.applied ? ' with recovery snapshot.' : '.'}`,
+          }
         }
         if (verb === 'archive') {
           const cwd = await ctx.workingDirectory.ensure(invocation.agent, invocation.signal)
