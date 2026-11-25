@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Worktree 拡張",
+    "description": "組み込みのワークツリー機能に加え、.agents/environments/*.toml によるローカル環境（setup/cleanup/actions）、未コミット変更の引き継ぎ、3-way パッチ適用、スナップショットアーカイブ、自動クリーンアップ、管理パネルを提供します。",
+    "detail": "docs/DETAIL.md"
+  }
+}

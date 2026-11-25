@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Améliorations Worktree",
+    "description": "Ajoute les environnements locaux (.agents/environments/*.toml avec setup/cleanup/actions), le transfert avec modifications non validées, le retour par patch 3 voies, l’archivage par instantané sans perte, le nettoyage par quota et un panneau de gestion visuel.",
+    "detail": "docs/DETAIL.md"
+  }
+}

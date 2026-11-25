@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Worktree-Erweiterungen",
+    "description": "Erweitert die integrierte Worktree-Unterstützung um lokale Umgebungen (.agents/environments/*.toml mit setup/cleanup/actions), Übergabe nicht committeter Änderungen, 3-Wege-Patch-Rückführung, verlustfreie Snapshot-Archivierung, automatische Bereinigung und ein Verwaltungs-Panel.",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -203,8 +203,14 @@ test('updateConfig syncs relative worktreeDirectory to built-in configEditor, re
     const cfgPath = join(dir, 'persisted-config.json')
 
     // Rejects absolute paths and parent traversal just like built-in worktree module
-    await assert.rejects(() => service.updateConfig({ worktreeDirectory: '/tmp/outside' }, { configFilePath: cfgPath }))
-    await assert.rejects(() => service.updateConfig({ worktreeDirectory: '../outside' }, { configFilePath: cfgPath }))
+    await assert.rejects(
+      () => service.updateConfig({ worktreeDirectory: '/tmp/outside' }, { configFilePath: cfgPath }),
+      (err) => err?.code === 'INVALID_WORKTREE_DIRECTORY' && err?.status === 400,
+    )
+    await assert.rejects(
+      () => service.updateConfig({ worktreeDirectory: '../outside' }, { configFilePath: cfgPath }),
+      (err) => err?.code === 'INVALID_WORKTREE_DIRECTORY' && err?.status === 400,
+    )
 
     // Accepts relative directory and syncs directly to the built-in worktree entry
     await service.updateConfig({

@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Melhorias de Worktree",
+    "description": "Adiciona ambientes locais (.agents/environments/*.toml com setup/cleanup/actions), transferência com alterações não confirmadas, aplicação de patches em 3 vias, arquivamento com snapshots sem perda, limpeza por cota e painel visual sobre o suporte integrado de worktrees.",
+    "detail": "docs/DETAIL.md"
+  }
+}

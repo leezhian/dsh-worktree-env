@@ -17,7 +17,8 @@
     "locale",
     "docs",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "README.zh.md"
   ],
   "scripts": {
     "test": "node --test tests/*.test.js"

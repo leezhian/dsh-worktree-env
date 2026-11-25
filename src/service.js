@@ -375,7 +375,10 @@ export class WorktreeEnhanceService {
     if (typeof patch.worktreeDirectory === 'string') {
       const normalized = patch.worktreeDirectory.trim().replace(/\/+$/, '')
       if (normalized.length > 0 && !isValidRelativeDir(normalized)) {
-        throw new Error('工作树目录必须是项目内的相对路径，不能以 / 开头或包含 . / .. / \\ / :（例如 .agents/worktrees 或 .worktrees）')
+        const error = new Error('Worktree directory must be a project-relative path (no leading "/", ".", "..", "\\", or ":", e.g. .agents/worktrees)')
+        error.status = 400
+        error.code = 'INVALID_WORKTREE_DIRECTORY'
+        throw error
       }
       nextDir = normalized === DEFAULT_WORKTREE_DIRECTORY ? '' : normalized
       this.config.worktreeDirectory = nextDir

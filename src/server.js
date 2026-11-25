@@ -312,9 +312,10 @@ async function guard(res, body) {
   } catch (error) {
     const status = typeof error?.status === 'number' ? error.status : 500
     const message = error instanceof Error ? error.message : inspect(error)
+    const code = typeof error?.code === 'string' ? error.code : undefined
     if (!res.headersSent) {
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
     }
-    res.end(JSON.stringify({ error: message }))
+    res.end(JSON.stringify(code !== undefined ? { error: message, code } : { error: message }))
   }
 }

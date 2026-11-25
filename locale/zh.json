@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Worktree 增强",
-    "description": "在内置 Worktree 能力之上补齐：本地环境（environment.toml 的 setup/cleanup/actions）、未提交改动转入 Worktree、三方合并回流主目录、无损快照归档、配额自动清理，以及跨项目 Worktree 管理面板。",
-    "detail": "docs/DETAIL.md"
+    "description": "在内置 Worktree 能力之上补齐：项目内 .agents/environments/*.toml 本地环境编排（setup/cleanup/actions）、未提交改动转入 Worktree、三方合并回流主目录、无损快照归档、配额自动清理，以及可视化设置与环境管理面板。",
+    "detail": "docs/DETAIL.zh.md"
   }
 }

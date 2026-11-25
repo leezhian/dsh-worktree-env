@@ -28,10 +28,13 @@ window.__ModuleLoader__.load({
       'settings.group': '创建与清理',
       'settings.worktreeDir.label': '工作树目录（项目内相对路径）',
       'settings.worktreeDir.desc': '留空默认使用 .agents/worktrees；修改后会同步生效于 DSH 内置「新建工作树」',
+      'settings.worktreeDir.invalid': '工作树目录必须是项目内的相对路径，不能以 / 开头或包含 . / .. / \\ / :（例如 .agents/worktrees 或 .worktrees）',
       'settings.fetch.label': '创建工作树前获取远程更新',
       'settings.fetch.desc': '创建工作树前，检查远程仓库是否有更新的提交',
       'settings.keepCount.label': '保留的工作树数量',
       'settings.keepCount.desc': '较旧的工作树会自动清理。已置顶或进行中的聊天所用的工作树会保留。',
+      'settings.keepCount.increase': '增加保留数量',
+      'settings.keepCount.decrease': '减少保留数量',
       'settings.confirmDelete.label': '删除工作树前询问',
       'settings.confirmDelete.desc': '适用于你手动删除的工作树',
       'settings.saved': '设置已保存',
@@ -44,6 +47,7 @@ window.__ModuleLoader__.load({
       'settings.managed.deleteTitle': '删除工作树',
       'settings.managed.deleteDesc': '将移除「{branch}」的本地工作树目录；如有未提交更改会先保存一份恢复快照。',
       'settings.managed.deleteSubmit': '删除',
+      'error.sessionUnavailable': '当前会话服务不可用',
       'panel.refresh': '刷新',
       'panel.setup.none': '待初始化',
       'panel.setup.running': 'Setup 运行中',
@@ -151,10 +155,13 @@ window.__ModuleLoader__.load({
       'settings.group': 'Creation & cleanup',
       'settings.worktreeDir.label': 'Worktree directory (project-relative)',
       'settings.worktreeDir.desc': 'Leave empty for .agents/worktrees; synced directly with DSH built-in worktree creation',
+      'settings.worktreeDir.invalid': 'Worktree directory must be a project-relative path without leading "/", ".", "..", "\\", or ":" (e.g. .agents/worktrees or .worktrees)',
       'settings.fetch.label': 'Fetch before creating worktrees',
       'settings.fetch.desc': 'Check the remote for newer commits before creating a worktree',
       'settings.keepCount.label': 'Worktrees to keep',
       'settings.keepCount.desc': 'Older worktrees are cleaned up automatically. Worktrees for pinned or active chats are kept.',
+      'settings.keepCount.increase': 'Increase worktrees to keep',
+      'settings.keepCount.decrease': 'Decrease worktrees to keep',
       'settings.confirmDelete.label': 'Ask before deleting worktrees',
       'settings.confirmDelete.desc': 'Applies to worktrees you delete yourself',
       'settings.saved': 'Settings saved',
@@ -167,6 +174,7 @@ window.__ModuleLoader__.load({
       'settings.managed.deleteTitle': 'Delete worktree',
       'settings.managed.deleteDesc': 'Removes the local worktree checkout for "{branch}". Uncommitted changes are snapshotted first.',
       'settings.managed.deleteSubmit': 'Delete',
+      'error.sessionUnavailable': 'Session service unavailable',
       'panel.refresh': 'Refresh',
       'panel.setup.none': 'Setup pending',
       'panel.setup.running': 'Setup running',
@@ -266,6 +274,770 @@ window.__ModuleLoader__.load({
       'logs.status.cancelled': 'Cancelled',
     }
 
+    const ja = {
+      'panel.title': 'Worktrees',
+      'panel.subtitle': 'ワークツリーディレクトリ、自動クリーンアップ設定、管理対象ワークツリー、ローカル環境スクリプトを管理します',
+      'panel.tab.settings': '設定',
+      'panel.tab.environments': '環境',
+      'settings.group': '作成とクリーンアップ',
+      'settings.worktreeDir.label': 'ワークツリーディレクトリ（プロジェクト内相対パス）',
+      'settings.worktreeDir.desc': '空の場合は .agents/worktrees を使用します。変更は DSH 組み込みのワークツリー作成と同期されます',
+      'settings.worktreeDir.invalid': 'ワークツリーディレクトリはプロジェクト内の相対パスである必要があります（先頭の "/"、"."、".."、"\\"、":" は使用不可。例: .agents/worktrees）',
+      'settings.fetch.label': 'ワークツリー作成前にリモートを取得',
+      'settings.fetch.desc': 'ワークツリーを作成する前にリモートの最新コミットを確認します',
+      'settings.keepCount.label': '保持するワークツリー数',
+      'settings.keepCount.desc': '古いワークツリーは自動的にクリーンアップされます。ピン留めやアクティブなチャットで使用中のワークツリーは保持されます。',
+      'settings.keepCount.increase': '保持数を増やす',
+      'settings.keepCount.decrease': '保持数を減らす',
+      'settings.confirmDelete.label': 'ワークツリー削除前に確認する',
+      'settings.confirmDelete.desc': '手動で削除するワークツリーに適用されます',
+      'settings.saved': '設定を保存しました',
+      'settings.managed.title': '管理中のワークツリー',
+      'settings.managed.refresh': 'ワークツリー一覧を更新',
+      'settings.managed.count': '{count} 件のワークツリー',
+      'settings.managed.empty': '管理中のワークツリーはありません',
+      'settings.managed.newChat': 'このワークツリーで新規チャットを開始',
+      'settings.managed.delete': 'ワークツリーを削除',
+      'settings.managed.deleteTitle': 'ワークツリーを削除',
+      'settings.managed.deleteDesc': '「{branch}」のローカルワークツリーを削除します。未コミットの変更がある場合は先に復元スナップショットを保存します。',
+      'settings.managed.deleteSubmit': '削除',
+      'error.sessionUnavailable': 'セッションサービスが利用できません',
+      'panel.refresh': '更新',
+      'panel.setup.none': 'Setup 未実行',
+      'panel.setup.running': 'Setup 実行中',
+      'panel.setup.succeeded': 'Setup 完了',
+      'panel.setup.failed': 'Setup 失敗',
+      'panel.setup.not-configured': '環境未設定',
+      'panel.act.setup': 'Setup を実行',
+      'panel.act.apply': '元ディレクトリに適用',
+      'panel.act.archive': 'アーカイブ',
+      'panel.act.busy': '処理中…',
+      'panel.act.error': '失敗',
+      'modal.cancel': 'キャンセル',
+      'modal.confirm': '確認',
+      'modal.apply.title': '元のチェックアウトに変更を適用',
+      'modal.apply.desc': '「{branch}」の変更を git apply --3way で元のディレクトリに統合します。競合がある場合は上書きせず中止します。',
+      'modal.apply.modeLabel': '適用範囲',
+      'modal.apply.modeBranch': 'ブランチ全体の差分（コミット済み + 未コミット）',
+      'modal.apply.modeUncommitted': '未コミットの変更のみ（HEAD との差分）',
+      'modal.apply.checking': 'パッチ競合を事前チェック中…',
+      'modal.apply.noChanges': 'この範囲には適用する変更がありません。',
+      'modal.apply.ready': '事前チェック完了：{count} 件のファイルを競合なしで適用できます。',
+      'modal.apply.conflict': '競合が検出されたため自動適用できません：',
+      'modal.apply.submit': '変更を適用',
+      'modal.archive.title': 'ワークツリーをアーカイブ',
+      'modal.archive.desc': '「{branch}」をアーカイブすると cleanup スクリプトを実行しディレクトリを削除します。未コミットの変更は非表示の Git スナップショットに保存され復元可能です。',
+      'modal.archive.submit': 'アーカイブする',
+      'env.selectProject': 'プロジェクトを選択',
+      'env.addProject': 'プロジェクトを追加',
+      'env.addProjectTitle': 'プロジェクトフォルダを追加',
+      'env.addProjectDesc': 'environment.toml を管理するローカルプロジェクトのパスを入力してください。',
+      'env.addProjectPlaceholder': '/path/to/project',
+      'env.addProjectSubmit': '追加',
+      'env.addEnvTo': '{name} に環境設定を追加',
+      'env.noProjects': 'プロジェクトがありません。「プロジェクトを追加」をクリックするか、サイドバーでワークスペースを開いてください。',
+      'env.back': '戻る',
+      'env.backToProjects': 'プロジェクトを選択',
+      'env.edit': '編集',
+      'env.editTitle': '環境を編集',
+      'env.createTitle': 'ローカル環境を作成',
+      'env.cancel': 'キャンセル',
+      'env.saveChanges': '変更を保存',
+      'env.saving': '保存中…',
+      'env.saved': '保存しました',
+      'env.name': '名前',
+      'env.setupTitle': 'セットアップスクリプト',
+      'env.setupDesc': 'ワークツリー作成時に実行されます',
+      'env.cleanupTitle': 'クリーンアップスクリプト',
+      'env.cleanupDesc': 'ワークツリー削除前にプロジェクトルートで実行されます',
+      'env.actionsTitle': 'アクション',
+      'env.actionsDesc': '任意のコマンドを実行でき、サイドバーに表示されます',
+      'env.varsBtn': '変数',
+      'env.vars.source': '元リポジトリのルートパス',
+      'env.vars.worktree': '現在のワークツリーディレクトリパス',
+      'env.vars.branch': '現在のワークツリーブランチ名',
+      'env.platform.top': 'デフォルト',
+      'env.platform.darwin': 'macOS',
+      'env.platform.linux': 'Linux',
+      'env.platform.win32': 'Windows',
+      'env.platformUsesDefault': 'プラットフォーム上書きなし。デフォルトスクリプトを使用します',
+      'env.noScript': 'スクリプト未設定',
+      'env.noPlatformScript': 'このプラットフォーム用のスクリプトは未設定です',
+      'env.noActions': 'アクション未設定',
+      'env.copy': 'コピー',
+      'env.copied': 'コピーしました',
+      'env.actionNameLabel': '名前',
+      'env.actionName': '名前（例: dev）',
+      'env.actionScriptLabel': 'アクションスクリプト',
+      'env.actionCommand': 'npm run dev',
+      'env.actionPlatformLabel': 'プラットフォーム',
+      'env.actionPlatformAll': 'すべてのプラットフォーム',
+      'env.actionIconLabel': 'アクションアイコンを選択',
+      'env.icon.tool': 'ツール',
+      'env.icon.run': '実行',
+      'env.icon.debug': 'デバッグ',
+      'env.icon.test': 'テスト',
+      'env.addAction': 'アクションを追加',
+      'env.removeAction': 'アクションを削除',
+      'env.parseError': '設定ファイルの解析に失敗しました',
+      'tab.title': 'Worktree 環境',
+      'tab.empty': 'アクティブなワークツリーがありません。',
+      'tab.emptyHint': 'ワークツリーを作成または開くと、ここからクイックアクションの実行、Setup の再実行、元ディレクトリへの適用ができます。',
+      'tab.refresh': '更新',
+      'menu.handoff': '変更を引き継いで Worktree へ移動',
+      'menu.apply': '変更を元ディレクトリに適用',
+      'menu.archive': 'Worktree をアーカイブ',
+      'menu.sending': '/worktree コマンドを送信しました',
+      'menu.sendFailed': 'コマンドの送信に失敗しました',
+      'logs.title': '実行ログ',
+      'logs.copy': 'コピー',
+      'logs.copied': 'コピーしました',
+      'logs.close': '閉じる',
+      'logs.cancel': '停止',
+      'logs.empty': '出力を待機中…',
+      'logs.status.running': '実行中',
+      'logs.status.succeeded': '成功',
+      'logs.status.failed': '失敗',
+      'logs.status.cancelled': 'キャンセル済み',
+    }
+
+    const es = {
+      'panel.title': 'Worktrees',
+      'panel.subtitle': 'Administra el directorio de worktrees, la limpieza automática, los worktrees activos y los scripts de entorno local',
+      'panel.tab.settings': 'Configuración',
+      'panel.tab.environments': 'Entornos',
+      'settings.group': 'Creación y limpieza',
+      'settings.worktreeDir.label': 'Directorio de worktrees (relativo al proyecto)',
+      'settings.worktreeDir.desc': 'Déjalo vacío para usar .agents/worktrees; se sincroniza con la creación integrada de DSH',
+      'settings.worktreeDir.invalid': 'El directorio debe ser una ruta relativa al proyecto sin "/", ".", "..", "\\" ni ":" al inicio (p. ej., .agents/worktrees)',
+      'settings.fetch.label': 'Obtener cambios remotos antes de crear worktrees',
+      'settings.fetch.desc': 'Comprueba si hay commits nuevos en el remoto antes de crear un worktree',
+      'settings.keepCount.label': 'Worktrees a conservar',
+      'settings.keepCount.desc': 'Los worktrees más antiguos se limpian automáticamente. Los fijados o con chats activos se conservan.',
+      'settings.keepCount.increase': 'Aumentar worktrees a conservar',
+      'settings.keepCount.decrease': 'Reducir worktrees a conservar',
+      'settings.confirmDelete.label': 'Preguntar antes de eliminar worktrees',
+      'settings.confirmDelete.desc': 'Se aplica a los worktrees que elimines manualmente',
+      'settings.saved': 'Configuración guardada',
+      'settings.managed.title': 'Worktrees administrados',
+      'settings.managed.refresh': 'Actualizar worktrees',
+      'settings.managed.count': '{count} worktree(s)',
+      'settings.managed.empty': 'No hay worktrees administrados',
+      'settings.managed.newChat': 'Nuevo chat en este worktree',
+      'settings.managed.delete': 'Eliminar worktree',
+      'settings.managed.deleteTitle': 'Eliminar worktree',
+      'settings.managed.deleteDesc': 'Elimina el directorio local de "{branch}". Los cambios sin confirmar se guardan primero en una instantánea.',
+      'settings.managed.deleteSubmit': 'Eliminar',
+      'error.sessionUnavailable': 'Servicio de sesiones no disponible',
+      'panel.refresh': 'Actualizar',
+      'panel.setup.none': 'Setup pendiente',
+      'panel.setup.running': 'Ejecutando setup',
+      'panel.setup.succeeded': 'Setup listo',
+      'panel.setup.failed': 'Setup fallido',
+      'panel.setup.not-configured': 'Sin entorno',
+      'panel.act.setup': 'Ejecutar setup',
+      'panel.act.apply': 'Aplicar al origen',
+      'panel.act.archive': 'Archivar',
+      'panel.act.busy': 'Procesando…',
+      'panel.act.error': 'Error',
+      'modal.cancel': 'Cancelar',
+      'modal.confirm': 'Confirmar',
+      'modal.apply.title': 'Aplicar cambios al directorio de origen',
+      'modal.apply.desc': 'Fusiona los cambios de "{branch}" en el directorio origen con git apply --3way. Si hay conflictos, se cancela sin sobrescribir.',
+      'modal.apply.modeLabel': 'Alcance',
+      'modal.apply.modeBranch': 'Todos los cambios de la rama (confirmados + sin confirmar)',
+      'modal.apply.modeUncommitted': 'Solo cambios sin confirmar (vs HEAD)',
+      'modal.apply.checking': 'Comprobando conflictos del parche…',
+      'modal.apply.noChanges': 'No hay cambios para aplicar en este alcance.',
+      'modal.apply.ready': 'Comprobación superada: se aplicarán {count} archivo(s) sin conflictos.',
+      'modal.apply.conflict': 'Los conflictos impiden aplicar los cambios:',
+      'modal.apply.submit': 'Aplicar cambios',
+      'modal.archive.title': 'Archivar worktree',
+      'modal.archive.desc': 'Archivar "{branch}" ejecuta el script de limpieza y elimina el directorio. Los cambios sin confirmar se guardan en una instantánea oculta de Git.',
+      'modal.archive.submit': 'Archivar worktree',
+      'env.selectProject': 'Seleccionar un proyecto',
+      'env.addProject': 'Añadir proyecto',
+      'env.addProjectTitle': 'Añadir carpeta de proyecto',
+      'env.addProjectDesc': 'Introduce la ruta local del proyecto para gestionar sus archivos environment.toml.',
+      'env.addProjectPlaceholder': '/path/to/project',
+      'env.addProjectSubmit': 'Añadir',
+      'env.addEnvTo': 'Añadir entorno a {name}',
+      'env.noProjects': 'Aún no hay proyectos. Haz clic en "Añadir proyecto" o abre un espacio de trabajo.',
+      'env.back': 'Atrás',
+      'env.backToProjects': 'Seleccionar un proyecto',
+      'env.edit': 'Editar',
+      'env.editTitle': 'Editar entorno',
+      'env.createTitle': 'Crear entorno local',
+      'env.cancel': 'Cancelar',
+      'env.saveChanges': 'Guardar cambios',
+      'env.saving': 'Guardando…',
+      'env.saved': 'Guardado',
+      'env.name': 'Nombre',
+      'env.setupTitle': 'Script de configuración',
+      'env.setupDesc': 'Este script se ejecuta al crear el worktree',
+      'env.cleanupTitle': 'Script de limpieza',
+      'env.cleanupDesc': 'Se ejecuta en la raíz del proyecto antes de limpiar un worktree',
+      'env.actionsTitle': 'Acciones',
+      'env.actionsDesc': 'Las acciones ejecutan comandos personalizados y aparecen en la barra lateral',
+      'env.varsBtn': 'Variables',
+      'env.vars.source': 'Ruta raíz del repositorio origen',
+      'env.vars.worktree': 'Ruta del directorio del worktree actual',
+      'env.vars.branch': 'Nombre de la rama del worktree actual',
+      'env.platform.top': 'Predeterminado',
+      'env.platform.darwin': 'macOS',
+      'env.platform.linux': 'Linux',
+      'env.platform.win32': 'Windows',
+      'env.platformUsesDefault': 'Sin configuración específica; usando el script predeterminado',
+      'env.noScript': 'Sin script configurado',
+      'env.noPlatformScript': 'Sin script configurado para esta plataforma',
+      'env.noActions': 'Sin acciones configuradas',
+      'env.copy': 'Copiar',
+      'env.copied': 'Copiado',
+      'env.actionNameLabel': 'Nombre',
+      'env.actionName': 'Nombre (p. ej., dev)',
+      'env.actionScriptLabel': 'Script de acción',
+      'env.actionCommand': 'npm run dev',
+      'env.actionPlatformLabel': 'Plataforma',
+      'env.actionPlatformAll': 'Todas las plataformas',
+      'env.actionIconLabel': 'Elegir icono de acción',
+      'env.icon.tool': 'Herramienta',
+      'env.icon.run': 'Ejecutar',
+      'env.icon.debug': 'Depurar',
+      'env.icon.test': 'Probar',
+      'env.addAction': 'Añadir acción',
+      'env.removeAction': 'Eliminar acción',
+      'env.parseError': 'Error al analizar el archivo de configuración',
+      'tab.title': 'Entorno Worktree',
+      'tab.empty': 'No hay worktrees activos.',
+      'tab.emptyHint': 'Crea o entra en un worktree para ejecutar acciones rápidas, repetir setup o aplicar cambios al origen.',
+      'tab.refresh': 'Actualizar',
+      'menu.handoff': 'Mover a worktree con cambios',
+      'menu.apply': 'Aplicar cambios al origen',
+      'menu.archive': 'Archivar worktree',
+      'menu.sending': 'Comando /worktree enviado',
+      'menu.sendFailed': 'No se pudo enviar el comando',
+      'logs.title': 'Registros de operación',
+      'logs.copy': 'Copiar',
+      'logs.copied': 'Copiado',
+      'logs.close': 'Cerrar',
+      'logs.cancel': 'Detener',
+      'logs.empty': 'Esperando salida…',
+      'logs.status.running': 'En ejecución',
+      'logs.status.succeeded': 'Completado',
+      'logs.status.failed': 'Fallido',
+      'logs.status.cancelled': 'Cancelado',
+    }
+
+    const fr = {
+      'panel.title': 'Worktrees',
+      'panel.subtitle': 'Gérer le dossier des worktrees, le nettoyage automatique, les worktrees actifs et les scripts d’environnement local',
+      'panel.tab.settings': 'Paramètres',
+      'panel.tab.environments': 'Environnements',
+      'settings.group': 'Création et nettoyage',
+      'settings.worktreeDir.label': 'Dossier des worktrees (relatif au projet)',
+      'settings.worktreeDir.desc': 'Laissez vide pour .agents/worktrees ; synchronisé avec la création intégrée de DSH',
+      'settings.worktreeDir.invalid': 'Le dossier doit être un chemin relatif au projet sans "/", ".", "..", "\\" ni ":" (ex. .agents/worktrees)',
+      'settings.fetch.label': 'Récupérer le dépôt distant avant de créer un worktree',
+      'settings.fetch.desc': 'Vérifier les nouveaux commits distants avant la création d’un worktree',
+      'settings.keepCount.label': 'Worktrees à conserver',
+      'settings.keepCount.desc': 'Les anciens worktrees sont nettoyés automatiquement. Ceux des discussions épinglées ou actives sont conservés.',
+      'settings.keepCount.increase': 'Augmenter le nombre à conserver',
+      'settings.keepCount.decrease': 'Diminuer le nombre à conserver',
+      'settings.confirmDelete.label': 'Demander avant de supprimer un worktree',
+      'settings.confirmDelete.desc': 'S’applique aux worktrees que vous supprimez manuellement',
+      'settings.saved': 'Paramètres enregistrés',
+      'settings.managed.title': 'Worktrees gérés',
+      'settings.managed.refresh': 'Actualiser les worktrees',
+      'settings.managed.count': '{count} worktree(s)',
+      'settings.managed.empty': 'Aucun worktree géré',
+      'settings.managed.newChat': 'Nouvelle discussion dans ce worktree',
+      'settings.managed.delete': 'Supprimer le worktree',
+      'settings.managed.deleteTitle': 'Supprimer le worktree',
+      'settings.managed.deleteDesc': 'Supprime le dossier local de « {branch} ». Les modifications non validées sont d’abord enregistrées dans un instantané.',
+      'settings.managed.deleteSubmit': 'Supprimer',
+      'error.sessionUnavailable': 'Service de session indisponible',
+      'panel.refresh': 'Actualiser',
+      'panel.setup.none': 'Setup en attente',
+      'panel.setup.running': 'Setup en cours',
+      'panel.setup.succeeded': 'Setup prêt',
+      'panel.setup.failed': 'Échec du setup',
+      'panel.setup.not-configured': 'Aucun environnement',
+      'panel.act.setup': 'Exécuter setup',
+      'panel.act.apply': 'Appliquer à la source',
+      'panel.act.archive': 'Archiver',
+      'panel.act.busy': 'En cours…',
+      'panel.act.error': 'Échec',
+      'modal.cancel': 'Annuler',
+      'modal.confirm': 'Confirmer',
+      'modal.apply.title': 'Appliquer les modifications à la source',
+      'modal.apply.desc': 'Fusionne les modifications de « {branch} » vers le répertoire source avec git apply --3way. Les conflits annulent proprement l’opération.',
+      'modal.apply.modeLabel': 'Portée',
+      'modal.apply.modeBranch': 'Toutes les modifications de la branche (validées + non validées)',
+      'modal.apply.modeUncommitted': 'Modifications non validées uniquement (vs HEAD)',
+      'modal.apply.checking': 'Vérification des conflits du patch…',
+      'modal.apply.noChanges': 'Aucune modification à appliquer dans cette portée.',
+      'modal.apply.ready': 'Vérification réussie : {count} fichier(s) seront appliqués sans conflit.',
+      'modal.apply.conflict': 'Des conflits empêchent l’application :',
+      'modal.apply.submit': 'Appliquer les modifications',
+      'modal.archive.title': 'Archiver le worktree',
+      'modal.archive.desc': 'L’archivage de « {branch} » exécute le script de nettoyage et supprime le répertoire. Les modifications non validées sont conservées dans un instantané Git masqué.',
+      'modal.archive.submit': 'Archiver le worktree',
+      'env.selectProject': 'Sélectionner un projet',
+      'env.addProject': 'Ajouter un projet',
+      'env.addProjectTitle': 'Ajouter un dossier de projet',
+      'env.addProjectDesc': 'Saisissez le chemin d’un dossier local pour gérer ses fichiers environment.toml.',
+      'env.addProjectPlaceholder': '/path/to/project',
+      'env.addProjectSubmit': 'Ajouter',
+      'env.addEnvTo': 'Ajouter un environnement à {name}',
+      'env.noProjects': 'Aucun projet. Cliquez sur « Ajouter un projet » ou ouvrez un espace de travail.',
+      'env.back': 'Retour',
+      'env.backToProjects': 'Sélectionner un projet',
+      'env.edit': 'Modifier',
+      'env.editTitle': 'Modifier l’environnement',
+      'env.createTitle': 'Créer un environnement local',
+      'env.cancel': 'Annuler',
+      'env.saveChanges': 'Enregistrer',
+      'env.saving': 'Enregistrement…',
+      'env.saved': 'Enregistré',
+      'env.name': 'Nom',
+      'env.setupTitle': 'Script d’initialisation',
+      'env.setupDesc': 'Exécuté lors de la création d’un worktree',
+      'env.cleanupTitle': 'Script de nettoyage',
+      'env.cleanupDesc': 'Exécuté à la racine du projet avant la suppression d’un worktree',
+      'env.actionsTitle': 'Actions',
+      'env.actionsDesc': 'Les actions exécutent des commandes personnalisées et apparaissent dans la barre latérale',
+      'env.varsBtn': 'Variables',
+      'env.vars.source': 'Chemin racine du dépôt source',
+      'env.vars.worktree': 'Chemin du worktree courant',
+      'env.vars.branch': 'Nom de la branche du worktree courant',
+      'env.platform.top': 'Par défaut',
+      'env.platform.darwin': 'macOS',
+      'env.platform.linux': 'Linux',
+      'env.platform.win32': 'Windows',
+      'env.platformUsesDefault': 'Aucune surcharge de plateforme ; script par défaut utilisé',
+      'env.noScript': 'Aucun script configuré',
+      'env.noPlatformScript': 'Aucun script configuré pour cette plateforme',
+      'env.noActions': 'Aucune action configurée',
+      'env.copy': 'Copier',
+      'env.copied': 'Copié',
+      'env.actionNameLabel': 'Nom',
+      'env.actionName': 'Nom (ex. dev)',
+      'env.actionScriptLabel': 'Script d’action',
+      'env.actionCommand': 'npm run dev',
+      'env.actionPlatformLabel': 'Plateforme',
+      'env.actionPlatformAll': 'Toutes les plateformes',
+      'env.actionIconLabel': 'Choisir l’icône de l’action',
+      'env.icon.tool': 'Outil',
+      'env.icon.run': 'Exécuter',
+      'env.icon.debug': 'Déboguer',
+      'env.icon.test': 'Tester',
+      'env.addAction': 'Ajouter une action',
+      'env.removeAction': 'Supprimer l’action',
+      'env.parseError': 'Échec de l’analyse du fichier de configuration',
+      'tab.title': 'Env Worktree',
+      'tab.empty': 'Aucun worktree actif.',
+      'tab.emptyHint': 'Créez ou ouvrez un worktree pour lancer des actions rapides, relancer le setup ou appliquer vos modifications.',
+      'tab.refresh': 'Actualiser',
+      'menu.handoff': 'Basculer dans un worktree avec les modifications',
+      'menu.apply': 'Appliquer les modifications à la source',
+      'menu.archive': 'Archiver le worktree',
+      'menu.sending': 'Commande /worktree envoyée',
+      'menu.sendFailed': 'Échec de l’envoi de la commande',
+      'logs.title': 'Journaux d’opération',
+      'logs.copy': 'Copier',
+      'logs.copied': 'Copié',
+      'logs.close': 'Fermer',
+      'logs.cancel': 'Arrêter',
+      'logs.empty': 'En attente de sortie…',
+      'logs.status.running': 'En cours',
+      'logs.status.succeeded': 'Réussi',
+      'logs.status.failed': 'Échoué',
+      'logs.status.cancelled': 'Annulé',
+    }
+
+    const de = {
+      'panel.title': 'Worktrees',
+      'panel.subtitle': 'Worktree-Verzeichnis, automatische Bereinigung, verwaltete Worktrees und lokale Umgebungsskripte verwalten',
+      'panel.tab.settings': 'Einstellungen',
+      'panel.tab.environments': 'Umgebungen',
+      'settings.group': 'Erstellung & Bereinigung',
+      'settings.worktreeDir.label': 'Worktree-Verzeichnis (relativ zum Projekt)',
+      'settings.worktreeDir.desc': 'Leer lassen für .agents/worktrees; wird direkt mit der integrierten DSH-Worktree-Erstellung synchronisiert',
+      'settings.worktreeDir.invalid': 'Das Verzeichnis muss ein projektrelativer Pfad ohne führendes "/", ".", "..", "\\" oder ":" sein (z. B. .agents/worktrees)',
+      'settings.fetch.label': 'Vor dem Erstellen von Worktrees abrufen (git fetch)',
+      'settings.fetch.desc': 'Vor dem Erstellen eines Worktrees prüfen, ob neuere Commits im Remote vorhanden sind',
+      'settings.keepCount.label': 'Zu behaltende Worktrees',
+      'settings.keepCount.desc': 'Ältere Worktrees werden automatisch bereinigt. Worktrees angepinnter oder aktiver Chats bleiben erhalten.',
+      'settings.keepCount.increase': 'Anzahl erhöhen',
+      'settings.keepCount.decrease': 'Anzahl verringern',
+      'settings.confirmDelete.label': 'Vor dem Löschen von Worktrees nachfragen',
+      'settings.confirmDelete.desc': 'Gilt für Worktrees, die Sie selbst löschen',
+      'settings.saved': 'Einstellungen gespeichert',
+      'settings.managed.title': 'Verwaltete Worktrees',
+      'settings.managed.refresh': 'Worktrees aktualisieren',
+      'settings.managed.count': '{count} Worktree(s)',
+      'settings.managed.empty': 'Keine verwalteten Worktrees',
+      'settings.managed.newChat': 'Neuer Chat in diesem Worktree',
+      'settings.managed.delete': 'Worktree löschen',
+      'settings.managed.deleteTitle': 'Worktree löschen',
+      'settings.managed.deleteDesc': 'Entfernt das lokale Worktree-Verzeichnis für „{branch}“. Nicht committete Änderungen werden zuerst als Snapshot gesichert.',
+      'settings.managed.deleteSubmit': 'Löschen',
+      'error.sessionUnavailable': 'Sitzungsdienst nicht verfügbar',
+      'panel.refresh': 'Aktualisieren',
+      'panel.setup.none': 'Setup ausstehend',
+      'panel.setup.running': 'Setup läuft',
+      'panel.setup.succeeded': 'Setup bereit',
+      'panel.setup.failed': 'Setup fehlgeschlagen',
+      'panel.setup.not-configured': 'Keine Umgebung',
+      'panel.act.setup': 'Setup ausführen',
+      'panel.act.apply': 'Auf Quelle anwenden',
+      'panel.act.archive': 'Archivieren',
+      'panel.act.busy': 'Wird verarbeitet…',
+      'panel.act.error': 'Fehlgeschlagen',
+      'modal.cancel': 'Abbrechen',
+      'modal.confirm': 'Bestätigen',
+      'modal.apply.title': 'Änderungen auf Quellverzeichnis anwenden',
+      'modal.apply.desc': 'Überträgt Änderungen aus „{branch}“ per git apply --3way in das Quellverzeichnis. Bei Konflikten wird sauber abgebrochen.',
+      'modal.apply.modeLabel': 'Umfang',
+      'modal.apply.modeBranch': 'Gesamter Branch-Diff (committet + nicht committet)',
+      'modal.apply.modeUncommitted': 'Nur nicht committete Änderungen (vs. HEAD)',
+      'modal.apply.checking': 'Patch-Konflikte werden geprüft…',
+      'modal.apply.noChanges': 'Keine Änderungen in diesem Umfang vorhanden.',
+      'modal.apply.ready': 'Vorprüfung bestanden: {count} Datei(en) lassen sich konfliktfrei anwenden.',
+      'modal.apply.conflict': 'Konflikte verhindern das automatische Anwenden:',
+      'modal.apply.submit': 'Änderungen anwenden',
+      'modal.archive.title': 'Worktree archivieren',
+      'modal.archive.desc': 'Beim Archivieren von „{branch}“ wird das Cleanup-Skript ausgeführt und das Verzeichnis entfernt. Nicht committete Änderungen werden als versteckter Git-Snapshot gesichert.',
+      'modal.archive.submit': 'Worktree archivieren',
+      'env.selectProject': 'Projekt auswählen',
+      'env.addProject': 'Projekt hinzufügen',
+      'env.addProjectTitle': 'Projektordner hinzufügen',
+      'env.addProjectDesc': 'Geben Sie einen lokalen Projektpfad ein, um dessen environment.toml-Dateien zu verwalten.',
+      'env.addProjectPlaceholder': '/path/to/project',
+      'env.addProjectSubmit': 'Hinzufügen',
+      'env.addEnvTo': 'Umgebung zu {name} hinzufügen',
+      'env.noProjects': 'Noch keine Projekte. Klicken Sie auf „Projekt hinzufügen“ oder öffnen Sie einen Arbeitsbereich.',
+      'env.back': 'Zurück',
+      'env.backToProjects': 'Projekt auswählen',
+      'env.edit': 'Bearbeiten',
+      'env.editTitle': 'Umgebung bearbeiten',
+      'env.createTitle': 'Lokale Umgebung erstellen',
+      'env.cancel': 'Abbrechen',
+      'env.saveChanges': 'Änderungen speichern',
+      'env.saving': 'Wird gespeichert…',
+      'env.saved': 'Gespeichert',
+      'env.name': 'Name',
+      'env.setupTitle': 'Setup-Skript',
+      'env.setupDesc': 'Dieses Skript wird beim Erstellen eines Worktrees ausgeführt',
+      'env.cleanupTitle': 'Cleanup-Skript',
+      'env.cleanupDesc': 'Wird vor dem Bereinigen eines Worktrees im Projektstamm ausgeführt',
+      'env.actionsTitle': 'Aktionen',
+      'env.actionsDesc': 'Aktionen führen benutzerdefinierte Befehle aus und erscheinen in der Seitenleiste',
+      'env.varsBtn': 'Variablen',
+      'env.vars.source': 'Stammpfad des Quell-Repositorys',
+      'env.vars.worktree': 'Pfad des aktuellen Worktree-Verzeichnisses',
+      'env.vars.branch': 'Branch-Name des aktuellen Worktrees',
+      'env.platform.top': 'Standard',
+      'env.platform.darwin': 'macOS',
+      'env.platform.linux': 'Linux',
+      'env.platform.win32': 'Windows',
+      'env.platformUsesDefault': 'Keine Plattform-Überschreibung; Standard-Skript wird verwendet',
+      'env.noScript': 'Kein Skript konfiguriert',
+      'env.noPlatformScript': 'Kein Skript für diese Plattform konfiguriert',
+      'env.noActions': 'Keine Aktionen konfiguriert',
+      'env.copy': 'Kopieren',
+      'env.copied': 'Kopiert',
+      'env.actionNameLabel': 'Name',
+      'env.actionName': 'Name (z. B. dev)',
+      'env.actionScriptLabel': 'Aktionsskript',
+      'env.actionCommand': 'npm run dev',
+      'env.actionPlatformLabel': 'Plattform',
+      'env.actionPlatformAll': 'Alle Plattformen',
+      'env.actionIconLabel': 'Aktionssymbol wählen',
+      'env.icon.tool': 'Werkzeug',
+      'env.icon.run': 'Ausführen',
+      'env.icon.debug': 'Debuggen',
+      'env.icon.test': 'Testen',
+      'env.addAction': 'Aktion hinzufügen',
+      'env.removeAction': 'Aktion löschen',
+      'env.parseError': 'Konfigurationsdatei konnte nicht geparst werden',
+      'tab.title': 'Worktree-Umgebung',
+      'tab.empty': 'Keine aktiven Worktrees.',
+      'tab.emptyHint': 'Erstellen oder öffnen Sie einen Worktree, um Schnellaktionen auszuführen, Setup erneut zu starten oder Änderungen zurückzuspielen.',
+      'tab.refresh': 'Aktualisieren',
+      'menu.handoff': 'Mit Änderungen in Worktree wechseln',
+      'menu.apply': 'Änderungen auf Quelle anwenden',
+      'menu.archive': 'Worktree archivieren',
+      'menu.sending': 'Befehl /worktree gesendet',
+      'menu.sendFailed': 'Befehl konnte nicht gesendet werden',
+      'logs.title': 'Ausführungsprotokolle',
+      'logs.copy': 'Kopieren',
+      'logs.copied': 'Kopiert',
+      'logs.close': 'Schließen',
+      'logs.cancel': 'Stoppen',
+      'logs.empty': 'Warte auf Ausgabe…',
+      'logs.status.running': 'Läuft',
+      'logs.status.succeeded': 'Erfolgreich',
+      'logs.status.failed': 'Fehlgeschlagen',
+      'logs.status.cancelled': 'Abgebrochen',
+    }
+
+    const ru = {
+      'panel.title': 'Worktrees',
+      'panel.subtitle': 'Управление каталогом worktree, автоочисткой, активными worktree и скриптами локального окружения',
+      'panel.tab.settings': 'Настройки',
+      'panel.tab.environments': 'Окружения',
+      'settings.group': 'Создание и очистка',
+      'settings.worktreeDir.label': 'Каталог worktree (относительно проекта)',
+      'settings.worktreeDir.desc': 'Оставьте пустым для .agents/worktrees; синхронизируется со встроенным созданием worktree в DSH',
+      'settings.worktreeDir.invalid': 'Каталог должен быть относительным путём внутри проекта без начального "/", ".", "..", "\\" и ":" (напр. .agents/worktrees)',
+      'settings.fetch.label': 'Выполнять git fetch перед созданием worktree',
+      'settings.fetch.desc': 'Проверять наличие новых коммитов в удалённом репозитории перед созданием worktree',
+      'settings.keepCount.label': 'Количество сохраняемых worktree',
+      'settings.keepCount.desc': 'Более старые worktree очищаются автоматически. Worktree закреплённых и активных чатов сохраняются.',
+      'settings.keepCount.increase': 'Увеличить количество',
+      'settings.keepCount.decrease': 'Уменьшить количество',
+      'settings.confirmDelete.label': 'Спрашивать перед удалением worktree',
+      'settings.confirmDelete.desc': 'Применяется к worktree, которые вы удаляете вручную',
+      'settings.saved': 'Настройки сохранены',
+      'settings.managed.title': 'Управляемые worktree',
+      'settings.managed.refresh': 'Обновить список worktree',
+      'settings.managed.count': 'Worktree: {count}',
+      'settings.managed.empty': 'Нет управляемых worktree',
+      'settings.managed.newChat': 'Новый чат в этом worktree',
+      'settings.managed.delete': 'Удалить worktree',
+      'settings.managed.deleteTitle': 'Удалить worktree',
+      'settings.managed.deleteDesc': 'Удалит локальный каталог worktree «{branch}». Незакоммиченные изменения сначала сохраняются в снимок.',
+      'settings.managed.deleteSubmit': 'Удалить',
+      'error.sessionUnavailable': 'Сервис сеансов недоступен',
+      'panel.refresh': 'Обновить',
+      'panel.setup.none': 'Ожидает setup',
+      'panel.setup.running': 'Выполняется setup',
+      'panel.setup.succeeded': 'Setup готов',
+      'panel.setup.failed': 'Ошибка setup',
+      'panel.setup.not-configured': 'Нет окружения',
+      'panel.act.setup': 'Запустить setup',
+      'panel.act.apply': 'Применить в источник',
+      'panel.act.archive': 'Архивировать',
+      'panel.act.busy': 'Выполняется…',
+      'panel.act.error': 'Ошибка',
+      'modal.cancel': 'Отмена',
+      'modal.confirm': 'Подтвердить',
+      'modal.apply.title': 'Применить изменения в исходный каталог',
+      'modal.apply.desc': 'Переносит изменения из «{branch}» в исходный каталог через git apply --3way. При конфликтах операция отменяется без перезаписи.',
+      'modal.apply.modeLabel': 'Область',
+      'modal.apply.modeBranch': 'Все изменения ветки (коммиты + незакоммиченные)',
+      'modal.apply.modeUncommitted': 'Только незакоммиченные изменения (относительно HEAD)',
+      'modal.apply.checking': 'Проверка конфликтов патча…',
+      'modal.apply.noChanges': 'В выбранной области нет изменений для применения.',
+      'modal.apply.ready': 'Проверка пройдена: будет применено файлов: {count}, без конфликтов.',
+      'modal.apply.conflict': 'Конфликты не позволяют применить изменения:',
+      'modal.apply.submit': 'Применить изменения',
+      'modal.archive.title': 'Архивировать worktree',
+      'modal.archive.desc': 'Архивация «{branch}» выполнит скрипт cleanup и удалит каталог. Незакоммиченные изменения сохраняются в скрытый Git-снимок для восстановления.',
+      'modal.archive.submit': 'Архивировать',
+      'env.selectProject': 'Выберите проект',
+      'env.addProject': 'Добавить проект',
+      'env.addProjectTitle': 'Добавить папку проекта',
+      'env.addProjectDesc': 'Введите путь к локальной папке проекта для управления файлами environment.toml.',
+      'env.addProjectPlaceholder': '/path/to/project',
+      'env.addProjectSubmit': 'Добавить',
+      'env.addEnvTo': 'Добавить окружение для {name}',
+      'env.noProjects': 'Проектов пока нет. Нажмите «Добавить проект» или откройте рабочую область.',
+      'env.back': 'Назад',
+      'env.backToProjects': 'Выберите проект',
+      'env.edit': 'Редактировать',
+      'env.editTitle': 'Редактировать окружение',
+      'env.createTitle': 'Создать локальное окружение',
+      'env.cancel': 'Отмена',
+      'env.saveChanges': 'Сохранить изменения',
+      'env.saving': 'Сохранение…',
+      'env.saved': 'Сохранено',
+      'env.name': 'Название',
+      'env.setupTitle': 'Скрипт настройки',
+      'env.setupDesc': 'Запускается при создании worktree',
+      'env.cleanupTitle': 'Скрипт очистки',
+      'env.cleanupDesc': 'Запускается в корне проекта перед очисткой worktree',
+      'env.actionsTitle': 'Действия',
+      'env.actionsDesc': 'Действия запускают произвольные команды и отображаются на боковой панели',
+      'env.varsBtn': 'Переменные',
+      'env.vars.source': 'Корневой путь исходного репозитория',
+      'env.vars.worktree': 'Путь текущего каталога worktree',
+      'env.vars.branch': 'Имя ветки текущего worktree',
+      'env.platform.top': 'По умолчанию',
+      'env.platform.darwin': 'macOS',
+      'env.platform.linux': 'Linux',
+      'env.platform.win32': 'Windows',
+      'env.platformUsesDefault': 'Переопределение для платформы не задано; используется скрипт по умолчанию',
+      'env.noScript': 'Скрипт не настроен',
+      'env.noPlatformScript': 'Для этой платформы скрипт не настроен',
+      'env.noActions': 'Действия не настроены',
+      'env.copy': 'Копировать',
+      'env.copied': 'Скопировано',
+      'env.actionNameLabel': 'Название',
+      'env.actionName': 'Название (напр. dev)',
+      'env.actionScriptLabel': 'Скрипт действия',
+      'env.actionCommand': 'npm run dev',
+      'env.actionPlatformLabel': 'Платформа',
+      'env.actionPlatformAll': 'Все платформы',
+      'env.actionIconLabel': 'Выбрать значок действия',
+      'env.icon.tool': 'Инструмент',
+      'env.icon.run': 'Запуск',
+      'env.icon.debug': 'Отладка',
+      'env.icon.test': 'Тест',
+      'env.addAction': 'Добавить действие',
+      'env.removeAction': 'Удалить действие',
+      'env.parseError': 'Не удалось разобрать файл конфигурации',
+      'tab.title': 'Окружение Worktree',
+      'tab.empty': 'Нет активных worktree.',
+      'tab.emptyHint': 'Создайте или откройте worktree, чтобы запускать быстрые действия, повторять setup или применять изменения в источник.',
+      'tab.refresh': 'Обновить',
+      'menu.handoff': 'Перенести с изменениями в Worktree',
+      'menu.apply': 'Применить изменения в источник',
+      'menu.archive': 'Архивировать Worktree',
+      'menu.sending': 'Команда /worktree отправлена',
+      'menu.sendFailed': 'Не удалось отправить команду',
+      'logs.title': 'Журнал операций',
+      'logs.copy': 'Копировать',
+      'logs.copied': 'Скопировано',
+      'logs.close': 'Закрыть',
+      'logs.cancel': 'Остановить',
+      'logs.empty': 'Ожидание вывода…',
+      'logs.status.running': 'Выполняется',
+      'logs.status.succeeded': 'Успешно',
+      'logs.status.failed': 'Ошибка',
+      'logs.status.cancelled': 'Отменено',
+    }
+
+    const pt = {
+      'panel.title': 'Worktrees',
+      'panel.subtitle': 'Gerencie o diretório de worktrees, limpeza automática, worktrees ativos e scripts de ambiente local',
+      'panel.tab.settings': 'Configurações',
+      'panel.tab.environments': 'Ambientes',
+      'settings.group': 'Criação e limpeza',
+      'settings.worktreeDir.label': 'Diretório de worktrees (relativo ao projeto)',
+      'settings.worktreeDir.desc': 'Deixe vazio para .agents/worktrees; sincronizado com a criação integrada do DSH',
+      'settings.worktreeDir.invalid': 'O diretório deve ser um caminho relativo ao projeto sem "/", ".", "..", "\\" ou ":" (ex.: .agents/worktrees)',
+      'settings.fetch.label': 'Buscar atualizações remotas antes de criar worktrees',
+      'settings.fetch.desc': 'Verifica novos commits no repositório remoto antes de criar um worktree',
+      'settings.keepCount.label': 'Worktrees a manter',
+      'settings.keepCount.desc': 'Worktrees mais antigos são limpos automaticamente. Worktrees de chats fixados ou ativos são mantidos.',
+      'settings.keepCount.increase': 'Aumentar quantidade mantida',
+      'settings.keepCount.decrease': 'Diminuir quantidade mantida',
+      'settings.confirmDelete.label': 'Perguntar antes de excluir worktrees',
+      'settings.confirmDelete.desc': 'Aplica-se a worktrees que você excluir manualmente',
+      'settings.saved': 'Configurações salvas',
+      'settings.managed.title': 'Worktrees gerenciados',
+      'settings.managed.refresh': 'Atualizar worktrees',
+      'settings.managed.count': '{count} worktree(s)',
+      'settings.managed.empty': 'Nenhum worktree gerenciado',
+      'settings.managed.newChat': 'Novo chat neste worktree',
+      'settings.managed.delete': 'Excluir worktree',
+      'settings.managed.deleteTitle': 'Excluir worktree',
+      'settings.managed.deleteDesc': 'Remove o diretório local de "{branch}". Alterações não confirmadas são salvas antes em um snapshot.',
+      'settings.managed.deleteSubmit': 'Excluir',
+      'error.sessionUnavailable': 'Serviço de sessão indisponível',
+      'panel.refresh': 'Atualizar',
+      'panel.setup.none': 'Setup pendente',
+      'panel.setup.running': 'Setup em execução',
+      'panel.setup.succeeded': 'Setup pronto',
+      'panel.setup.failed': 'Falha no setup',
+      'panel.setup.not-configured': 'Sem ambiente',
+      'panel.act.setup': 'Executar setup',
+      'panel.act.apply': 'Aplicar na origem',
+      'panel.act.archive': 'Arquivar',
+      'panel.act.busy': 'Processando…',
+      'panel.act.error': 'Falha',
+      'modal.cancel': 'Cancelar',
+      'modal.confirm': 'Confirmar',
+      'modal.apply.title': 'Aplicar alterações ao diretório de origem',
+      'modal.apply.desc': 'Mescla as alterações de "{branch}" de volta ao diretório de origem via git apply --3way. Conflitos abortam sem sobrescrever.',
+      'modal.apply.modeLabel': 'Escopo',
+      'modal.apply.modeBranch': 'Todas as alterações da branch (confirmadas + não confirmadas)',
+      'modal.apply.modeUncommitted': 'Somente alterações não confirmadas (vs HEAD)',
+      'modal.apply.checking': 'Verificando conflitos de patch…',
+      'modal.apply.noChanges': 'Nenhuma alteração para aplicar neste escopo.',
+      'modal.apply.ready': 'Pré-verificação aprovada: {count} arquivo(s) serão aplicados sem conflitos.',
+      'modal.apply.conflict': 'Conflitos impedem a aplicação limpa:',
+      'modal.apply.submit': 'Aplicar alterações',
+      'modal.archive.title': 'Arquivar worktree',
+      'modal.archive.desc': 'Arquivar "{branch}" executa o script de limpeza e remove o diretório. Alterações não confirmadas são salvas em um snapshot oculto do Git.',
+      'modal.archive.submit': 'Arquivar worktree',
+      'env.selectProject': 'Selecionar um projeto',
+      'env.addProject': 'Adicionar projeto',
+      'env.addProjectTitle': 'Adicionar pasta do projeto',
+      'env.addProjectDesc': 'Informe o caminho de uma pasta local para gerenciar seus arquivos environment.toml.',
+      'env.addProjectPlaceholder': '/path/to/project',
+      'env.addProjectSubmit': 'Adicionar',
+      'env.addEnvTo': 'Adicionar ambiente a {name}',
+      'env.noProjects': 'Nenhum projeto ainda. Clique em "Adicionar projeto" ou abra um espaço de trabalho.',
+      'env.back': 'Voltar',
+      'env.backToProjects': 'Selecionar um projeto',
+      'env.edit': 'Editar',
+      'env.editTitle': 'Editar ambiente',
+      'env.createTitle': 'Criar ambiente local',
+      'env.cancel': 'Cancelar',
+      'env.saveChanges': 'Salvar alterações',
+      'env.saving': 'Salvando…',
+      'env.saved': 'Salvo',
+      'env.name': 'Nome',
+      'env.setupTitle': 'Script de setup',
+      'env.setupDesc': 'Este script é executado ao criar um worktree',
+      'env.cleanupTitle': 'Script de limpeza',
+      'env.cleanupDesc': 'Executado na raiz do projeto antes de limpar um worktree',
+      'env.actionsTitle': 'Ações',
+      'env.actionsDesc': 'As ações executam comandos personalizados e aparecem na barra lateral',
+      'env.varsBtn': 'Variáveis',
+      'env.vars.source': 'Caminho raiz do repositório de origem',
+      'env.vars.worktree': 'Caminho do diretório do worktree atual',
+      'env.vars.branch': 'Nome da branch do worktree atual',
+      'env.platform.top': 'Padrão',
+      'env.platform.darwin': 'macOS',
+      'env.platform.linux': 'Linux',
+      'env.platform.win32': 'Windows',
+      'env.platformUsesDefault': 'Sem substituição de plataforma; usando o script padrão',
+      'env.noScript': 'Nenhum script configurado',
+      'env.noPlatformScript': 'Nenhum script configurado para esta plataforma',
+      'env.noActions': 'Nenhuma ação configurada',
+      'env.copy': 'Copiar',
+      'env.copied': 'Copiado',
+      'env.actionNameLabel': 'Nome',
+      'env.actionName': 'Nome (ex.: dev)',
+      'env.actionScriptLabel': 'Script da ação',
+      'env.actionCommand': 'npm run dev',
+      'env.actionPlatformLabel': 'Plataforma',
+      'env.actionPlatformAll': 'Todas as plataformas',
+      'env.actionIconLabel': 'Escolher ícone da ação',
+      'env.icon.tool': 'Ferramenta',
+      'env.icon.run': 'Executar',
+      'env.icon.debug': 'Depurar',
+      'env.icon.test': 'Testar',
+      'env.addAction': 'Adicionar ação',
+      'env.removeAction': 'Excluir ação',
+      'env.parseError': 'Falha ao analisar o arquivo de configuração',
+      'tab.title': 'Ambiente Worktree',
+      'tab.empty': 'Nenhum worktree ativo.',
+      'tab.emptyHint': 'Crie ou abra um worktree para executar ações rápidas, reexecutar setup ou aplicar alterações na origem.',
+      'tab.refresh': 'Atualizar',
+      'menu.handoff': 'Mover para worktree com alterações',
+      'menu.apply': 'Aplicar alterações na origem',
+      'menu.archive': 'Arquivar worktree',
+      'menu.sending': 'Comando /worktree enviado',
+      'menu.sendFailed': 'Falha ao enviar o comando',
+      'logs.title': 'Logs de operação',
+      'logs.copy': 'Copiar',
+      'logs.copied': 'Copiado',
+      'logs.close': 'Fechar',
+      'logs.cancel': 'Parar',
+      'logs.empty': 'Aguardando saída…',
+      'logs.status.running': 'Em execução',
+      'logs.status.succeeded': 'Concluído',
+      'logs.status.failed': 'Falhou',
+      'logs.status.cancelled': 'Cancelado',
+    }
+
+    const DICTS = { zh, en, ja, es, fr, de, ru, pt }
+
     /** ---- tiny API layer ---- */
     async function api(path, init) {
       const response = await fetch(`${API}${path}`, {
@@ -275,7 +1047,11 @@ window.__ModuleLoader__.load({
       const text = await response.text()
       let value = null
       try { value = text.length > 0 ? JSON.parse(text) : null } catch { value = { error: text } }
-      if (!response.ok) throw new Error(value?.error ?? `${response.status} ${response.statusText}`)
+      if (!response.ok) {
+        const err = new Error(value?.error ?? `${response.status} ${response.statusText}`)
+        if (typeof value?.code === 'string') err.code = value.code
+        throw err
+      }
       return value
     }
     const enc = encodeURIComponent
@@ -1618,7 +2394,9 @@ window.__ModuleLoader__.load({
       const sessions = ctx?.get?.('sessions')
       const uiWorkspace = ctx?.get?.('uiWorkspace')
       if (sessions === undefined || typeof sessions.create !== 'function') {
-        throw new Error('session service unavailable')
+        const err = new Error('session service unavailable')
+        err.code = 'SESSION_SERVICE_UNAVAILABLE'
+        throw err
       }
       const sessionId = await sessions.create({ cwd: item.path })
       if (typeof uiWorkspace?.openSession === 'function') {
@@ -1627,7 +2405,7 @@ window.__ModuleLoader__.load({
       return sessionId
     }
 
-    function NumberStepper({ value, draft, min = 1, disabled, label, onDraftChange, onCommit, onStep }) {
+    function NumberStepper({ value, draft, min = 1, disabled, label, increaseLabel, decreaseLabel, onDraftChange, onCommit, onStep }) {
       const numeric = Math.max(min, Math.floor(Number(value) || min))
       return h('div', { className: 'dshwt-stepper' },
         h('input', {
@@ -1652,7 +2430,7 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'dshwt-stepper-arrow',
-            'aria-label': '+',
+            'aria-label': increaseLabel ?? '+',
             disabled,
             onMouseDown: e => e.preventDefault(),
             onClick: () => onStep(1),
@@ -1660,7 +2438,7 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'dshwt-stepper-arrow',
-            'aria-label': '-',
+            'aria-label': decreaseLabel ?? '-',
             disabled: disabled || numeric <= min,
             onMouseDown: e => e.preventDefault(),
             onClick: () => onStep(-1),
@@ -1700,7 +2478,7 @@ window.__ModuleLoader__.load({
         try {
           await openWorktreeSession(item)
         } catch (err) {
-          setError(err.message)
+          setError(err?.code === 'SESSION_SERVICE_UNAVAILABLE' ? { code: err.code } : { message: err.message })
         } finally {
           setBusyId(null)
         }
@@ -1731,7 +2509,8 @@ window.__ModuleLoader__.load({
             'aria-label': t('settings.managed.refresh'),
             onClick: () => void refresh(),
           }, h(RefreshIcon, { size: 15 }))),
-        error ? h('div', { className: 'dshwt-setting-err', role: 'alert', style: { paddingTop: 8 } }, error) : null,
+        error ? h('div', { className: 'dshwt-setting-err', role: 'alert', style: { paddingTop: 8 } },
+          typeof error === 'object' && error.code === 'SESSION_SERVICE_UNAVAILABLE' ? t('error.sessionUnavailable') : (error.message ?? error)) : null,
         grouped.length === 0
           ? h('div', { className: 'dshwt-managed-empty' }, t('settings.managed.empty'))
           : grouped.map(([repoRoot, list]) => {
@@ -1819,12 +2598,23 @@ window.__ModuleLoader__.load({
           await update(patch)
           flashSaved()
         } catch (err) {
-          if (target === 'dir') setDirError(err.message)
-          else setGeneralError(err.message)
+          const payload = err?.code === 'INVALID_WORKTREE_DIRECTORY'
+            ? { code: 'INVALID_WORKTREE_DIRECTORY' }
+            : { message: err.message }
+          if (target === 'dir') setDirError(payload)
+          else setGeneralError(payload)
         } finally {
           setBusy(false)
         }
       }
+
+      const formatSettingError = (err) => {
+        if (err === null || err === undefined) return null
+        if (typeof err === 'object' && err.code === 'INVALID_WORKTREE_DIRECTORY') return t('settings.worktreeDir.invalid')
+        return typeof err === 'object' ? err.message : String(err)
+      }
+      const dirErrorText = formatSettingError(dirError)
+      const generalErrorText = formatSettingError(generalError)
 
       const commitDir = () => {
         const next = dirDraft.trim().replace(/\/+$/, '')
@@ -1853,19 +2643,19 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshwt-settings-head' },
             h('h3', { className: 'dshwt-settings-group-title' }, t('settings.group')),
             savedVisible ? h('span', { className: 'dshwt-settings-saved', role: 'status' }, t('settings.saved')) : null),
-          generalError ? h('div', { className: 'dshwt-setting-err', role: 'alert', style: { paddingBottom: 8 } }, generalError) : null,
+          generalErrorText ? h('div', { className: 'dshwt-setting-err', role: 'alert', style: { paddingBottom: 8 } }, generalErrorText) : null,
           h('div', { className: 'dshwt-settings-list' },
             h('div', { className: 'dshwt-setting-row' },
               h('div', { className: 'dshwt-setting-copy' },
                 h('div', { className: 'dshwt-setting-title' }, t('settings.worktreeDir.label')),
                 h('div', { className: 'dshwt-setting-desc' }, t('settings.worktreeDir.desc')),
-                dirError ? h('div', { className: 'dshwt-setting-err', role: 'alert' }, dirError) : null),
+                dirErrorText ? h('div', { className: 'dshwt-setting-err', role: 'alert' }, dirErrorText) : null),
               h('div', { className: 'dshwt-setting-ctrl' },
                 h('input', {
                   className: 'dshwt-setting-input',
                   placeholder: config.defaultWorktreeDirectory || '.agents/worktrees',
                   'aria-label': t('settings.worktreeDir.label'),
-                  'aria-invalid': dirError ? true : undefined,
+                  'aria-invalid': dirErrorText ? true : undefined,
                   spellCheck: false,
                   autoComplete: 'off',
                   value: dirDraft,
@@ -1899,6 +2689,8 @@ window.__ModuleLoader__.load({
                   min: 1,
                   disabled: busy,
                   label: t('settings.keepCount.label'),
+                  increaseLabel: t('settings.keepCount.increase'),
+                  decreaseLabel: t('settings.keepCount.decrease'),
                   onDraftChange: setKeepDraft,
                   onCommit: commitKeepCount,
                   onStep: stepKeepCount,
@@ -2087,8 +2879,9 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    function SessionMenuRows(ctx, t) {
+    function SessionMenuRows(ctx) {
       return function MenuRow(props) {
+        const { t } = useLocale()
         const [sent, setSent] = useState(null)
         const [inManagedWorktree, setInManagedWorktree] = useState(() => {
           const cwd = props.cwd ?? sessionCwdOf(ctx, props.sessionId ?? props.id)
@@ -2138,42 +2931,130 @@ window.__ModuleLoader__.load({
     }
 
     /** ---- locale plumbing ---- */
-    const NS_STATE = { dicts: { zh, en }, listeners: new Set() }
-    function detectLang() {
+    const NS_STATE = {
+      dicts: DICTS,
+      ctx: null,
+      ctxLocale: null,
+      boundTranslate: null,
+      listeners: new Set(),
+    }
+
+    function normalizeLang(tag) {
+      if (typeof tag !== 'string' || tag.trim().length === 0) return null
+      const lower = tag.trim().toLowerCase()
+      if (NS_STATE.dicts[lower] !== undefined) return lower
+      const primary = lower.split('-')[0]
+      if (NS_STATE.dicts[primary] !== undefined) return primary
+      return null
+    }
+
+    function detectBrowserLang() {
+      if (typeof document !== 'undefined') {
+        const docLang = normalizeLang(document.documentElement?.lang)
+        if (docLang !== null) return docLang
+      }
       if (typeof navigator !== 'undefined') {
-        const preferred = navigator.language?.toLowerCase() ?? 'en'
-        if (preferred.startsWith('zh')) return 'zh'
+        const candidates = [
+          ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+          navigator.language,
+        ]
+        for (const tag of candidates) {
+          const matched = normalizeLang(tag)
+          if (matched !== null) return matched
+        }
       }
       return 'en'
     }
+
+    function readLocaleState() {
+      const snap = NS_STATE.ctxLocale?.getSnapshot?.() ?? NS_STATE.ctxLocale?.getLocale?.()
+      if (snap && typeof snap.active === 'string' && snap.active.length > 0) {
+        return { active: snap.active, revision: typeof snap.revision === 'number' ? snap.revision : 0 }
+      }
+      return { active: detectBrowserLang(), revision: 0 }
+    }
+
+    function formatTemplate(template, params) {
+      if (params === undefined || params === null) return template
+      return template.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match))
+    }
+
+    function translateKey(key, params) {
+      if (typeof NS_STATE.boundTranslate === 'function') {
+        const value = NS_STATE.boundTranslate(key, params)
+        if (typeof value === 'string' && value !== key) return value
+      }
+      const lang = normalizeLang(readLocaleState().active) ?? 'en'
+      const dict = NS_STATE.dicts[lang] ?? NS_STATE.dicts.en ?? {}
+      const template = dict[key] ?? NS_STATE.dicts.en?.[key] ?? key
+      return formatTemplate(template, params)
+    }
+
+    function notifyLocaleListeners() {
+      const next = readLocaleState()
+      for (const listener of [...NS_STATE.listeners]) {
+        try { listener(next) } catch { /* ignore */ }
+      }
+    }
+
     function useLocale() {
-      const [lang, setLang] = useState(detectLang)
+      const [state, setState] = useState(readLocaleState)
       useEffect(() => {
-        NS_STATE.listeners.add(setLang)
-        return () => { NS_STATE.listeners.delete(setLang) }
+        setState(readLocaleState())
+        NS_STATE.listeners.add(setState)
+        const onLangChange = () => setState(readLocaleState())
+        if (typeof window !== 'undefined') window.addEventListener('languagechange', onLangChange)
+        return () => {
+          NS_STATE.listeners.delete(setState)
+          if (typeof window !== 'undefined') window.removeEventListener('languagechange', onLangChange)
+        }
       }, [])
-      const t = useCallback((key, params) => {
-        const dict = NS_STATE.dicts[lang] ?? NS_STATE.dicts.en ?? {}
-        let text = dict[key] ?? (NS_STATE.dicts.en ?? {})[key] ?? key
-        if (params !== undefined) for (const [name, value] of Object.entries(params)) text = text.replace(`{${name}}`, String(value))
-        return text
-      }, [lang])
-      return { lang, t }
+      const t = useCallback((key, params) => translateKey(key, params), [state.active, state.revision])
+      return { lang: normalizeLang(state.active) ?? 'en', active: state.active, t }
     }
 
     function registerDictionaries(ctx) {
-      const locale = ctx.get('locale')
+      const locale = ctx.get?.('locale') ?? ctx.locale
       if (locale === undefined) return () => {}
       const dispose = []
-      for (const [id, dict] of Object.entries(NS_STATE.dicts)) {
-        try {
-          dispose.push(locale.register(NS, id, dict))
-        } catch {
-          // keep fallback dictionaries
+      let registered = false
+      try {
+        const d = locale.register(NS, NS_STATE.dicts)
+        if (typeof d === 'function') dispose.push(d)
+        registered = true
+      } catch {
+        // fallback for single-locale register(ns, id, dict) signatures
+      }
+      if (!registered) {
+        for (const [id, dict] of Object.entries(NS_STATE.dicts)) {
+          try {
+            const d = locale.register(NS, id, dict)
+            if (typeof d === 'function') dispose.push(d)
+          } catch {
+            // keep fallback dictionaries
+          }
         }
       }
       NS_STATE.ctxLocale = locale
-      return () => { for (const d of dispose) d() }
+      NS_STATE.boundTranslate = typeof locale.bind === 'function' ? locale.bind(NS) : null
+      if (typeof locale.subscribe === 'function') {
+        const unsub = locale.subscribe(() => notifyLocaleListeners())
+        if (typeof unsub === 'function') dispose.push(unsub)
+      }
+      if (typeof ctx.on === 'function') {
+        const off = ctx.on('locale/change', () => notifyLocaleListeners())
+        if (typeof off === 'function') dispose.push(off)
+      }
+      notifyLocaleListeners()
+      return () => {
+        for (const d of dispose) {
+          try { d() } catch { /* ignore */ }
+        }
+        if (NS_STATE.ctxLocale === locale) {
+          NS_STATE.ctxLocale = null
+          NS_STATE.boundTranslate = null
+        }
+      }
     }
 
     function mountStyles() {
@@ -2204,15 +3085,15 @@ window.__ModuleLoader__.load({
         const disposers = [() => { if (NS_STATE.ctx === ctx) NS_STATE.ctx = null }, disposeStyles, disposeDictionaries]
 
         disposers.push(ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-          name: 'sidebar.panellist', id: 'dsh-worktree-env', order: 25,
-          label: () => (ctx.locale?.bind?.(NS)?.('panel.title') ?? zh['panel.title']),
+          name: 'sidebar.panellist', id: 'dsh-worktree-env', order: 25, locale: NS,
+          label: () => translateKey('panel.title'),
         }, function PanelIconButton(props) {
           return h(BranchIcon, { size: props?.size ?? 18 })
         })), 'dsh-worktree-env: panel icon'))
 
         disposers.push(ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
-          name: 'main', key: 'dsh-worktree-env',
-          label: () => (ctx.locale?.bind?.(NS)?.('panel.title') ?? zh['panel.title']),
+          name: 'main', key: 'dsh-worktree-env', locale: NS,
+          label: () => translateKey('panel.title'),
         }, WorktreePanel)), 'dsh-worktree-env: main panel'))
 
         disposers.push(ctx.effect(() => {
@@ -2222,27 +3103,20 @@ window.__ModuleLoader__.load({
             id: 'dsh-worktree-env',
             kind: 'dsh-worktree-env',
             priority: 'plugin',
-            title: () => (ctx.locale?.bind?.(NS)?.('tab.title') ?? zh['tab.title']),
+            title: () => translateKey('tab.title'),
           })
           const disposePane = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-            name: 'sidebar.right.pane.tab', key: 'dsh-worktree-env',
+            name: 'sidebar.right.pane.tab', key: 'dsh-worktree-env', locale: NS,
           }, RightPane))
           return () => { disposePane(); disposeTab() }
         }, 'dsh-worktree-env: right tab'))
 
         disposers.push(ctx.effect(() => ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
-          name: 'sidebar.workspaces.session.menu.item', id: 'dsh-worktree-env-menu', order: 350,
-        }, SessionMenuRows(ctx, useLocaleProxy()))), 'dsh-worktree-env: session menu'))
+          name: 'sidebar.workspaces.session.menu.item', id: 'dsh-worktree-env-menu', order: 350, locale: NS,
+        }, SessionMenuRows(ctx))), 'dsh-worktree-env: session menu'))
 
         return () => { for (const dispose of disposers) dispose() }
       },
-    }
-
-    function useLocaleProxy() {
-      return (key) => {
-        const lang = detectLang()
-        return (NS_STATE.dicts[lang] ?? NS_STATE.dicts.en)[key] ?? key
-      }
     }
   },
 })
