@@ -1,0 +1,49 @@
+{
+  "name": "dsh-worktree-env",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Worktree enhancements for DeepSeek Harness: local environments (setup/cleanup/actions), uncommitted-change handoff, three-way patch backflow, lossless snapshot archiving, and quota cleanup.",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "src",
+    "client.js",
+    "cordis.patch.yml",
+    "locale",
+    "docs",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.0-alpha.0",
+    "@deepseek-ai/schemastery": "^3.18.0-alpha.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true }
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  }
+}

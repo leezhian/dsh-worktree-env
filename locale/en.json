@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Worktree enhancements",
+    "description": "Local environments (environment.toml setup/cleanup/actions), uncommitted-change handoff into worktrees, three-way patch backflow, lossless snapshot archiving, quota cleanup, and a cross-project worktree manager panel on top of the built-in worktree support.",
+    "detail": "docs/DETAIL.md"
+  }
+}
