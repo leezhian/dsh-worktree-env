@@ -32,8 +32,15 @@ export async function nestedRepositoryFindings(git, path, signal) {
   /** @type {string[]} */
   const findings = []
   const submodules = await git.run(path, ['submodule', 'status'], { allowedExitCodes: [0, 1, 128], signal })
-  if (submodules.exitCode === 0 && submodules.stdout.trim().length > 0) {
-    findings.push(`initialized submodules: ${submodules.stdout.trim().split('\n').length}`)
+  if (submodules.exitCode === 0) {
+    // `git submodule status` prefixes uninitialized submodules with `-`;
+    // only initialized submodules (` `, `+`, `U`) contain live working trees.
+    const initialized = submodules.stdout
+      .split(/\r?\n/)
+      .filter(line => line.length > 0 && !line.startsWith('-'))
+    if (initialized.length > 0) {
+      findings.push(`initialized submodules: ${initialized.length}`)
+    }
   }
   const walk = async (dir, depth) => {
     if (depth > 6 || findings.length >= 5) return
@@ -126,21 +133,6 @@ export async function restoreSnapshot(git, path, ref, signal) {
   } finally {
     await rm(file, { force: true }).catch(() => {})
   }
-}
-
-/**
- * List snapshot refs of one repository.
- * @param {import('./git.js').GitRunner} git - runner.
- * @param {string} anyDir - any directory of the repository.
- * @param {AbortSignal} [signal] - cancellation.
- * @returns {Promise<{ ref: string, commit: string }[]>}
- */
-export async function listSnapshots(git, anyDir, signal) {
-  const text = await git.check(anyDir, ['for-each-ref', '--format=%(refname) %(objectname)', SNAPSHOT_NAMESPACE], { signal })
-  return text.split('\n').filter(Boolean).map((line) => {
-    const [ref, commit] = line.split(' ')
-    return { ref, commit }
-  })
 }
 
 /**

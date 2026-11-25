@@ -76,11 +76,12 @@ function promptTextFor(service, agent) {
     lines.push(`To move changes back onto the source checkout use worktree_apply_patch (dryRun first); to free the directory while keeping uncommitted work recoverable use worktree_archive.`)
     return `${lines.join('\n')}\n`
   }
-  const preference = service.cachedPreference(cwd)
-  if (preference === 'always' || preference === 'dirty') {
+  const policy = service.cachedRepoPolicy(cwd)
+  if (policy === null || !policy.isGitRepo) return ''
+  if (policy.preference === 'always' || (policy.preference === 'dirty' && policy.dirty)) {
     return [
       '# Git worktree (dsh-worktree-env)',
-      preference === 'always'
+      policy.preference === 'always'
         ? `This repository prefers edits in an isolated worktree. Before modifying files, ask the user for confirmation, then enter one with worktree_handoff (or create_worktree).`
         : `This repository suggests an isolated worktree while the main checkout has uncommitted changes. Before modifying files, ask the user whether to worktree_handoff (carrying the uncommitted changes) or edit in place.`,
       '',

@@ -10,23 +10,30 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DEFAULT_WORKTREE_DIRECTORY, isValidRelativeWorktreeDir } from './config.js'
 
 /**
  * Package staged, unstaged, and non-ignored untracked changes of one checkout
  * relative to a given baseline commit/tree (defaults to `HEAD`).
+ * Excludes DSH worktree pool directories so untracked linked worktrees are
+ * never packaged as nested gitlinks.
  * @param {import('./git.js').GitRunner} git - runner.
  * @param {string} root - checkout root.
  * @param {AbortSignal} [signal] - cancellation.
  * @param {string} [baseline] - commit or ref to diff against (default `'HEAD'`).
+ * @param {readonly string[]} [excludePaths] - repo-relative directories to exclude.
  * @returns {Promise<{ patch: string | null, fileCount: number, files: string[] }>} unified `--binary` patch (null when clean).
  */
-export async function packageWorkingTree(git, root, signal, baseline = 'HEAD') {
+export async function packageWorkingTree(git, root, signal, baseline = 'HEAD', excludePaths = [DEFAULT_WORKTREE_DIRECTORY]) {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-worktree-pkg-'))
   try {
     const indexFile = join(dir, 'index')
     const env = { GIT_INDEX_FILE: indexFile }
+    const excludes = [...new Set(excludePaths)]
+      .filter(isValidRelativeWorktreeDir)
+      .map(p => `:(exclude)${p}`)
     await git.check(root, ['read-tree', 'HEAD'], { env, signal })
-    await git.check(root, ['add', '-A', '--', '.'], { env, signal })
+    await git.check(root, ['add', '-A', '--', '.', ...excludes], { env, signal })
     const tree = (await git.check(root, ['write-tree'], { env, signal })).trim()
     const baseTree = (await git.check(root, ['rev-parse', `${baseline}^{tree}`], { signal })).trim()
     if (tree === baseTree) return { patch: null, fileCount: 0, files: [] }
@@ -87,6 +94,9 @@ export async function precheckPatchesOnRef(git, commonDir, targetRef, patches, t
       const present = listed.stdout.split('\n').filter(Boolean)
       if (present.length > 0) {
         await git.check(workDir, ['checkout-index', '-f', '--', ...present], { env, signal })
+        // Refresh cached stat info for materialized files so `git apply --3way`
+        // does not reject untouched files with "does not match index".
+        await git.run(workDir, ['update-index', '-q', '--ignore-missing', '--refresh'], { env, allowedExitCodes: [0, 1], signal })
       }
     }
     /** @type {string[]} */
@@ -95,7 +105,7 @@ export async function precheckPatchesOnRef(git, commonDir, targetRef, patches, t
       const file = join(dir, `pre-${patch.name}`)
       await writeFile(file, patch.text, 'utf8')
       const result = await git.run(workDir, ['apply', '--check', '--3way', '--', file], { env, allowedExitCodes: [0, 1, 128], signal })
-      if (result.exitCode !== 0) conflicts.push(...conflictFiles(result.stderr, patch.name))
+      conflicts.push(...detectApplyConflicts(result, patch.name))
     }
     return { ok: conflicts.length === 0, conflicts }
   } finally {
@@ -112,19 +122,20 @@ export async function precheckPatchesOnRef(git, commonDir, targetRef, patches, t
  * @returns {Promise<{ ok: boolean, conflicts: string[] }>} conflict file list when not ok.
  */
 export async function precheckPatches(git, target, patches, signal) {
-  /** @type {string[]} */
-  const conflicts = []
-  for (const patch of patches) {
-    const file = join(tmpdir(), `dsh-wt-pre-${patch.name}`)
-    await writeFile(file, patch.text, 'utf8')
-    try {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-pre-'))
+  try {
+    /** @type {string[]} */
+    const conflicts = []
+    for (const patch of patches) {
+      const file = join(dir, patch.name)
+      await writeFile(file, patch.text, 'utf8')
       const result = await git.run(target, ['apply', '--check', '--3way', '--', file], { allowedExitCodes: [0, 1, 128], signal })
-      if (result.exitCode !== 0) conflicts.push(...conflictFiles(result.stderr, patch.name))
-    } finally {
-      await rm(file, { force: true }).catch(() => {})
+      conflicts.push(...detectApplyConflicts(result, patch.name))
     }
+    return { ok: conflicts.length === 0, conflicts }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
-  return { ok: conflicts.length === 0, conflicts }
 }
 
 /**
@@ -135,14 +146,15 @@ export async function precheckPatches(git, target, patches, signal) {
  * @param {AbortSignal} [signal] - cancellation.
  */
 export async function applyPatches(git, target, patches, signal) {
-  for (const patch of patches) {
-    const file = join(tmpdir(), `dsh-wt-apply-${patch.name}`)
-    await writeFile(file, patch.text, 'utf8')
-    try {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-apply-'))
+  try {
+    for (const patch of patches) {
+      const file = join(dir, patch.name)
+      await writeFile(file, patch.text, 'utf8')
       await git.check(target, ['apply', '--3way', '--', file], { signal })
-    } finally {
-      await rm(file, { force: true }).catch(() => {})
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
@@ -165,15 +177,48 @@ export async function fetchUpstream(git, root, log, signal) {
 }
 
 /**
+ * Inspect the outcome of `git apply --check --3way` or `git apply --3way`.
+ * Note: `git apply --check --3way` exits with code 0 even when a three-way
+ * merge produces conflicts, reporting `Applied patch to '<file>' with conflicts.`
+ * on stderr; we check both exitCode and stderr conflict markers.
+ * @param {{ exitCode: number, stderr: string }} result
+ * @param {string} label
+ * @returns {string[]}
+ */
+export function detectApplyConflicts(result, label) {
+  const explicit = threeWayConflictFiles(result.stderr, label)
+  if (result.exitCode === 0) return explicit
+  const all = conflictFiles(result.stderr, label)
+  return all.length > 0 ? all : explicit
+}
+
+function threeWayConflictFiles(stderr, label) {
+  const out = []
+  const seen = new Set()
+  for (const line of stderr.split(/\r?\n/)) {
+    const match = /^Applied patch to '(.+)' with conflicts\.$/.exec(line)
+      ?? /^U\s+(.+)$/.exec(line)
+    if (match !== null) {
+      const file = `${label}: ${match[1].trim()}`
+      if (!seen.has(file)) {
+        seen.add(file)
+        out.push(file)
+      }
+    }
+  }
+  return out
+}
+
+/**
  * Extract conflict file paths from a `git apply --check` stderr.
  * @param {string} stderr - git error output.
  * @param {string} label - patch label for context.
  * @returns {string[]} deduplicated conflict descriptions.
  */
 export function conflictFiles(stderr, label) {
-  const out = []
-  const seen = new Set()
-  for (const line of stderr.split('\n')) {
+  const out = threeWayConflictFiles(stderr, label)
+  const seen = new Set(out)
+  for (const line of stderr.split(/\r?\n/)) {
     const match = /^(?:error: )?(?:patch failed|conflict|[A-Za-z ]+hunk)?:?\s*([^:]+):\d+/.exec(line)
       ?? /^error: ([^:]+): (?:does not match|already exists|No such file)/.exec(line)
     if (match !== null) {

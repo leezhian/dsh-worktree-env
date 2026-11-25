@@ -9,8 +9,6 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,50 +16,7 @@ import { WorktreeEnhanceService } from '../src/service.js'
 import { normalizeConfig } from '../src/index.js'
 import { writeEnvConfig } from '../src/env-config.js'
 import { storeOf } from '../src/store.js'
-
-const run = promisify(execFile)
-
-function makeCtx(extra = {}) {
-  return {
-    get: (key) => extra[key],
-    subprocess: {
-      resolveExecutable: async (command) => command,
-      spawn: (spec) => {
-        const env = { ...process.env }
-        for (const [key, value] of Object.entries(spec.env ?? {})) {
-          if (value === undefined) delete env[key]
-          else env[key] = value
-        }
-        const child = execFile(spec.argv[0], spec.argv.slice(1), { cwd: spec.cwd, env, signal: spec.signal, maxBuffer: 64 * 1024 * 1024 }, () => {})
-        return {
-          stdout: child.stdout,
-          stderr: child.stderr,
-          collected: {},
-          done: new Promise((resolve, reject) => {
-            child.on('error', reject)
-            child.on('close', (code, signal) => resolve({ exitCode: code, signal: signal ?? null }))
-          }),
-          terminate: () => { if (child.exitCode === null) child.kill('SIGTERM') },
-          waitForExit: async () => true,
-        }
-      },
-    },
-    workingDirectory: {
-      get: () => undefined,
-      ensure: async () => undefined,
-      set: async (_agent, path) => path,
-    },
-  }
-}
-
-async function initRepo(dir) {
-  await run('git', ['init', '-q', '-b', 'main', dir])
-  await run('git', ['-C', dir, 'config', 'user.email', 'test@example.com'])
-  await run('git', ['-C', dir, 'config', 'user.name', 'Test'])
-  await writeFile(join(dir, 'file.txt'), 'v1\n', 'utf8')
-  await run('git', ['-C', dir, 'add', '-A'])
-  await run('git', ['-C', dir, 'commit', '-q', '-m', 'init'])
-}
+import { initRepo, makeCtx, run } from './_helpers.js'
 
 test('listAll preserves baseCommit after new commits so branch backflow still works', async () => {
   const rawDir = await mkdtemp(join(tmpdir(), 'dsh-wtenv-base-'))
@@ -253,8 +208,9 @@ test('updateConfig syncs relative worktreeDirectory to built-in configEditor, re
     await store.patch(wtRegular, { lastAccessedAt: 200 })
 
     const result = await service.enforceQuota()
-    assert.equal(result.archived, 0)
+    assert.equal(result.archived, 1, 'should skip pinned wtPinned and advance to archive wtRegular to meet keepCount')
     assert.equal((await store.get(wtPinned)).status, 'active')
+    assert.equal((await store.get(wtRegular)).status, 'archived')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -531,5 +487,145 @@ test('unarchiving cancels pending archive cleanup and clean worktrees removed by
     assert.equal(await readFile(join(wtPath, 'file.txt'), 'utf8'), 'v1\n')
   } finally {
     await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('re-running setup preserves previously exported vars, handoff honors autoRunSetup, and handleSessionArchived honors config flags', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-fixes-')))
+  try {
+    await initRepo(dir)
+    await writeEnvConfig(join(dir, '.agents', 'environments', 'environment.toml'), {
+      name: 'RerunEnv',
+      setupScripts: { top: 'export FIRST_VAR=one\nexport SECOND_VAR=two\n' },
+    })
+    const baseCommit = (await run('git', ['-C', dir, 'rev-parse', 'HEAD'])).stdout.trim()
+    const wtPath = join(dir, '.agents', 'worktrees', 'feat-rerun')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-rerun', wtPath])
+
+    const service = new WorktreeEnhanceService(makeCtx(), normalizeConfig({ autoRunSetup: false, autoRunCleanup: false }))
+    await service.registerCreated({ path: wtPath, branch: 'feat-rerun', baseCommit, repositoryRoot: dir }, { runSetup: false })
+
+    // Run setup twice; re-run must keep BOTH FIRST_VAR and SECOND_VAR instead of wiping unchanged ones
+    const run1 = await service.runSetup(wtPath)
+    assert.equal(run1.status, 'succeeded')
+    const run2 = await service.runSetup(wtPath)
+    assert.equal(run2.status, 'succeeded')
+    const commonDir = (await run('git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim()
+    const captured = await storeOf(commonDir).readEnv('feat-rerun')
+    assert.deepEqual(captured, { FIRST_VAR: 'one', SECOND_VAR: 'two' })
+
+    // handoff respects autoRunSetup: false and does not race observeSessionEvent
+    const ctxHandoff = makeCtx()
+    let currentDir = dir
+    ctxHandoff.workingDirectory = {
+      get: () => currentDir,
+      ensure: async () => currentDir,
+      set: async (_agent, next) => { currentDir = next; return next },
+    }
+    const handoffService = new WorktreeEnhanceService(ctxHandoff, normalizeConfig({ autoRunSetup: false, autoRunCleanup: false }))
+    const agent = { session: { header: { id: 'sess-handoff-1', cwd: dir } } }
+    const handoffRes = await handoffService.handoff(agent, { name: 'feat-handoff', carryChanges: false })
+    assert.equal(handoffRes.record.setupState, 'not-configured')
+    assert.equal([...handoffService.runner.operations.values()].filter(op => op.kind === 'setup').length, 0)
+
+    // handleSessionArchived respects autoCleanupEnabled: false and snapshotOnArchive: false
+    const disabledCleanup = new WorktreeEnhanceService(
+      makeCtx({ workspaceRegistry: { list: () => [{ path: dir }], pinnedSessionIds: [] } }),
+      normalizeConfig({ autoCleanupEnabled: false, autoRunSetup: false, autoRunCleanup: false }),
+    )
+    const skipped = await disabledCleanup.handleSessionArchived('sess-handoff-1')
+    assert.equal(skipped.archived, 0)
+    assert.equal((await disabledCleanup.requireRecord(handoffRes.created.path)).status, 'active')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('prompt dirty policy checks actual dirty git state, and server SSE avoids duplicate logs while /quota requires POST', async () => {
+  const { registerPromptContext } = await import('../src/prompt.js')
+  const { registerServer } = await import('../src/server.js')
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-prompt-sse-')))
+  const nonGitDir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-nongit-')))
+  try {
+    await initRepo(dir)
+
+    // 1. Prompt `dirty` policy: silent on non-git & clean repo, active only when repo is dirty
+    let registeredPromptFn = null
+    let currentCwd = nonGitDir
+    const listeners = new Map()
+    const ctx = makeCtx()
+    ctx.workingDirectory.get = () => currentCwd
+    ctx.on = (event, fn) => {
+      const set = listeners.get(event) ?? new Set()
+      set.add(fn)
+      listeners.set(event, set)
+      return () => set.delete(fn)
+    }
+    const service = new WorktreeEnhanceService(ctx, normalizeConfig({ defaultCreationPreference: 'dirty', autoRunSetup: false }))
+    const disposePrompt = registerPromptContext(ctx, service)
+    const fakeAgent = {
+      session: { header: { id: 'sess-p1', cwd: nonGitDir } },
+      ctx: {
+        inject: (_deps, fn) => {
+          fn({
+            effect: (cb) => cb(),
+            systemPrompt: { context: (def) => { registeredPromptFn = def.text; return () => {} } },
+          })
+          return () => {}
+        },
+      },
+    }
+    for (const fn of listeners.get('agent/created') ?? []) fn({ agent: fakeAgent })
+
+    await service.refreshPreference(nonGitDir)
+    assert.equal(registeredPromptFn(), '', 'non-git directory must not receive dirty worktree prompt')
+
+    currentCwd = dir
+    await service.refreshPreference(dir)
+    assert.equal(registeredPromptFn(), '', 'clean git repo must not receive dirty worktree prompt')
+
+    await writeFile(join(dir, 'file.txt'), 'dirty edit\n', 'utf8')
+    await service.refreshPreference(dir)
+    assert.match(registeredPromptFn(), /uncommitted changes/, 'dirty git repo must receive dirty worktree prompt')
+    disposePrompt()
+
+    // 2. Server routes: /quota rejects GET (405) and accepts POST (200); SSE stream does not duplicate existing logs
+    const routes = []
+    ctx.effect = (fn) => fn()
+    ctx.webServer = { register: (def) => { routes.push(def); return () => {} } }
+    const disposeServer = registerServer(ctx, service)
+
+    const quotaRoute = routes.find(r => r.path.endsWith('/quota'))
+    const mockRes = () => {
+      const state = { status: 0, headers: {}, body: '' }
+      return {
+        state,
+        headersSent: false,
+        writeHead(status, headers) { state.status = status; state.headers = headers; this.headersSent = true },
+        write(chunk) { state.body += chunk },
+        end(chunk = '') { state.body += chunk },
+      }
+    }
+    const getQuotaRes = mockRes()
+    await quotaRoute.handler({ method: 'GET', url: '/api/dsh-worktree-env/quota', on() {} }, getQuotaRes)
+    assert.equal(getQuotaRes.state.status, 405)
+
+    const postQuotaRes = mockRes()
+    await quotaRoute.handler({ method: 'POST', url: '/api/dsh-worktree-env/quota', on() {} }, postQuotaRes)
+    assert.equal(postQuotaRes.state.status, 200)
+
+    const op = service.runner.begin('action', 'sse-test', dir)
+    service.runner.log(op, 'stdout', 'line-one\n')
+    service.runner.finish(op, 'succeeded')
+    const opRoute = routes.find(r => r.path.endsWith('/operations'))
+    const sseRes = mockRes()
+    await opRoute.handler({ method: 'GET', url: `/api/dsh-worktree-env/operations/${op.id}/stream`, on() {} }, sseRes)
+    const occurrences = (sseRes.state.body.match(/line-one/g) ?? []).length
+    assert.equal(occurrences, 1, 'SSE stream must deliver pre-existing logs once via snapshot without duplicate replay')
+
+    disposeServer()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+    await rm(nonGitDir, { recursive: true, force: true })
   }
 })

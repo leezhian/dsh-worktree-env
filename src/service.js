@@ -7,27 +7,20 @@
  */
 
 import { existsSync } from 'node:fs'
-import { access, constants, mkdir, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { access, constants, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { DEFAULT_WORKTREE_DIRECTORY, isValidRelativeWorktreeDir, persistedConfigPath, writePersistedConfig } from './config.js'
 import { GitRunner, parseWorktreeList, repoInfo } from './git.js'
 import { classifyManagedEnvPath, discoverEnvConfig, listEnvConfigs, parseGitRemoteOwner, preferredConfigPath, readEnvConfigFile, writeEnvConfig } from './env-config.js'
 import { EnvRunner } from './env-runner.js'
-import { applyPatches, backflowPatch, fetchUpstream, packageWorkingTree, precheckPatches, precheckPatchesOnRef } from './transfer.js'
+import { detectApplyConflicts, fetchUpstream, packageWorkingTree } from './transfer.js'
+import { executeBackflow, inspectBackflowInfo, sourceCheckoutStatus } from './backflow.js'
 import { deleteSnapshot, directorySize, isClean, nestedRepositoryFindings, restoreSnapshot, writeSnapshot } from './snapshot.js'
 import { storeOf } from './store.js'
 
 const CREATED_RECORD = 'plugin:worktree/created'
 const NATIVE_WORKTREE_PKG = '@deepseek-ai/dsh-experimental-worktree'
-const DEFAULT_WORKTREE_DIRECTORY = '.agents/worktrees'
-
-function isValidRelativeDir(value) {
-  return typeof value === 'string'
-    && value.length > 0
-    && !value.includes('\\')
-    && !value.includes(':')
-    && value.split('/').every(part => part.length > 0 && part !== '.' && part !== '..')
-}
 
 /**
  * User-facing plugin configuration (the row's `config`).
@@ -50,8 +43,6 @@ function isValidRelativeDir(value) {
  * every consumer closes over the one instance created in `apply`.
  */
 export class WorktreeEnhanceService {
-  static inject = ['subprocess', 'workingDirectory']
-
   /**
    * @param {import('@deepseek-ai/cordis').Context} ctx - owning Host context.
    * @param {EnhanceConfig} config - resolved plugin configuration.
@@ -71,8 +62,12 @@ export class WorktreeEnhanceService {
     this.describeCache = new Map()
     /** repository root → cached creation preference. */
     this.preferenceCache = new Map()
+    /** directory → cached `{ isGitRepo, preference, dirty }` for system prompt policy. */
+    this.repoPolicyCache = new Map()
     /** Sessions currently being unarchived (cancels pending/in-flight archive cleanup). */
     this.unarchivingSessions = new Set()
+    /** Sessions currently inside `handoff()` (prevents duplicate premature adoption). */
+    this.pendingHandoffSessions = new Set()
   }
 
   /**
@@ -190,66 +185,12 @@ export class WorktreeEnhanceService {
   }
 
   /**
-   * Start `setup` asynchronously and return the tracked operation id immediately
-   * so the Web UI can stream live logs over SSE.
-   * @param {string} id - record id.
-   * @returns {Promise<{ operationId: string | null, status: string }>}
+   * Shared setup execution body. Intentionally does NOT pre-inject previously
+   * captured env vars before snapshotting `before.env`, so re-running `setup`
+   * captures the full fresh delta instead of losing unchanged variables.
    */
-  async startSetup(id) {
-    const record = await this.requireRecord(id)
-    const config = await discoverEnvConfig(this.git, record.path)
-    if (config.setup === null) return { operationId: null, status: 'not-configured' }
-    const store = await this.storeOfRecord(record)
-    const operation = this.runner.begin('setup', `${record.branch} · setup`, record.path)
-    this.busyPaths.add(record.path)
+  async _executeSetup(record, config, store, operation) {
     const env = this.scriptEnv(record)
-    const captured = await store.readEnv(record.branch)
-    if (captured !== null) Object.assign(env, captured)
-    void (async () => {
-      try {
-        await store.patch(record.id, { setupState: 'running', setupError: null })
-        this.runner.log(operation, 'meta', `Running setup in ${record.path}\n`)
-        const result = await this.runner.runScript({
-          ctx: this.ctx, operation, cwd: record.path, script: config.setup.script, env,
-          timeoutMs: this.config.setupTimeoutMs, captureEnv: true,
-        })
-        if (result.status === 'succeeded' && Object.keys(result.capturedEnv).length > 0) {
-          await store.writeEnv(record.branch, result.capturedEnv)
-        }
-        await store.patch(record.id, {
-          setupState: result.status === 'succeeded' ? 'succeeded' : result.status === 'cancelled' ? 'none' : 'failed',
-          setupError: result.status === 'failed'
-            ? `setup exited with code ${result.exitCode}`
-            : result.status === 'cancelled' ? 'setup cancelled' : null,
-        })
-        this.describeCache.delete(record.path)
-        this.runner.finish(operation, result.status === 'succeeded' ? 'succeeded' : result.status === 'cancelled' ? 'cancelled' : 'failed')
-      } catch (error) {
-        this.runner.log(operation, 'stderr', `${error instanceof Error ? error.message : String(error)}\n`)
-        await store.patch(record.id, { setupState: 'failed', setupError: error instanceof Error ? error.message : String(error) }).catch(() => {})
-        this.runner.finish(operation, 'failed')
-      } finally {
-        this.busyPaths.delete(record.path)
-      }
-    })()
-    return { operationId: operation.id, status: 'running' }
-  }
-
-  /**
-   * Run (or re-run) `setup` for one worktree record.
-   * @param {string} id - record id.
-   * @returns {Promise<{ operationId: string | null, status: string, capturedEnvCount: number }>}
-   */
-  async runSetup(id) {
-    const record = await this.requireRecord(id)
-    const config = await discoverEnvConfig(this.git, record.path)
-    if (config.setup === null) return { operationId: null, status: 'not-configured', capturedEnvCount: 0 }
-    const store = await this.storeOfRecord(record)
-    const operation = this.runner.begin('setup', `${record.branch} · setup`, record.path)
-    this.busyPaths.add(record.path)
-    const env = this.scriptEnv(record)
-    const captured = await store.readEnv(record.branch)
-    if (captured !== null) Object.assign(env, captured)
     try {
       await store.patch(record.id, { setupState: 'running', setupError: null })
       this.runner.log(operation, 'meta', `Running setup in ${record.path}\n`)
@@ -268,10 +209,48 @@ export class WorktreeEnhanceService {
       })
       this.describeCache.delete(record.path)
       this.runner.finish(operation, result.status === 'succeeded' ? 'succeeded' : result.status === 'cancelled' ? 'cancelled' : 'failed')
-      return { operationId: operation.id, status: result.status, capturedEnvCount: Object.keys(result.capturedEnv).length }
+      return result
+    } catch (error) {
+      this.runner.log(operation, 'stderr', `${error instanceof Error ? error.message : String(error)}\n`)
+      await store.patch(record.id, { setupState: 'failed', setupError: error instanceof Error ? error.message : String(error) }).catch(() => {})
+      this.runner.finish(operation, 'failed')
+      throw error
     } finally {
       this.busyPaths.delete(record.path)
     }
+  }
+
+  /**
+   * Start `setup` asynchronously and return the tracked operation id immediately
+   * so the Web UI can stream live logs over SSE.
+   * @param {string} id - record id.
+   * @returns {Promise<{ operationId: string | null, status: string }>}
+   */
+  async startSetup(id) {
+    const record = await this.requireRecord(id)
+    const config = await discoverEnvConfig(this.git, record.path)
+    if (config.setup === null) return { operationId: null, status: 'not-configured' }
+    const store = await this.storeOfRecord(record)
+    const operation = this.runner.begin('setup', `${record.branch} · setup`, record.path)
+    this.busyPaths.add(record.path)
+    void this._executeSetup(record, config, store, operation).catch(() => {})
+    return { operationId: operation.id, status: 'running' }
+  }
+
+  /**
+   * Run (or re-run) `setup` for one worktree record.
+   * @param {string} id - record id.
+   * @returns {Promise<{ operationId: string | null, status: string, capturedEnvCount: number }>}
+   */
+  async runSetup(id) {
+    const record = await this.requireRecord(id)
+    const config = await discoverEnvConfig(this.git, record.path)
+    if (config.setup === null) return { operationId: null, status: 'not-configured', capturedEnvCount: 0 }
+    const store = await this.storeOfRecord(record)
+    const operation = this.runner.begin('setup', `${record.branch} · setup`, record.path)
+    this.busyPaths.add(record.path)
+    const result = await this._executeSetup(record, config, store, operation)
+    return { operationId: operation.id, status: result.status, capturedEnvCount: Object.keys(result.capturedEnv).length }
   }
 
   /**
@@ -294,6 +273,27 @@ export class WorktreeEnhanceService {
     return { status: result.status }
   }
 
+  /** Shared async launcher for worktree and plain-directory actions. */
+  _launchActionOperation({ label, actionName, cwd, command, env, onFinally }) {
+    const operation = this.runner.begin('action', label, cwd)
+    operation.actionName = actionName
+    this.busyPaths.add(cwd)
+    void (async () => {
+      try {
+        this.runner.log(operation, 'meta', `Running "${actionName}" in ${cwd}\n`)
+        const result = await this.runner.runScript({
+          ctx: this.ctx, operation, cwd, script: command, env,
+          timeoutMs: this.config.setupTimeoutMs, captureEnv: false,
+        })
+        this.runner.finish(operation, result.status === 'succeeded' ? 'succeeded' : result.status === 'cancelled' ? 'cancelled' : 'failed')
+      } finally {
+        this.busyPaths.delete(cwd)
+        if (typeof onFinally === 'function') await onFinally()
+      }
+    })()
+    return { operationId: operation.id }
+  }
+
   /**
    * Run one named action from the worktree's environment config.
    * @param {string} id - record id.
@@ -305,27 +305,18 @@ export class WorktreeEnhanceService {
     const config = await discoverEnvConfig(this.git, record.path)
     const action = config.actions.find(entry => entry.name === actionName)
     if (action === undefined) throw new Error(`unknown action "${actionName}" for ${record.branch}`)
-    const operation = this.runner.begin('action', `${record.branch} · ${action.name}`, record.path)
-    operation.actionName = action.name
     const store = await this.storeOfRecord(record)
     const env = this.scriptEnv(record)
     const captured = await store.readEnv(record.branch)
     if (captured !== null) Object.assign(env, captured)
-    this.busyPaths.add(record.path)
-    void (async () => {
-      try {
-        this.runner.log(operation, 'meta', `Running "${action.name}" in ${record.path}\n`)
-        const result = await this.runner.runScript({
-          ctx: this.ctx, operation, cwd: record.path, script: action.command, env,
-          timeoutMs: this.config.setupTimeoutMs, captureEnv: false,
-        })
-        this.runner.finish(operation, result.status === 'succeeded' ? 'succeeded' : result.status === 'cancelled' ? 'cancelled' : 'failed')
-      } finally {
-        this.busyPaths.delete(record.path)
-        await store.patch(record.id, { lastAccessedAt: Date.now() }).catch(() => {})
-      }
-    })()
-    return { operationId: operation.id }
+    return this._launchActionOperation({
+      label: `${record.branch} · ${action.name}`,
+      actionName: action.name,
+      cwd: record.path,
+      command: action.command,
+      env,
+      onFinally: () => store.patch(record.id, { lastAccessedAt: Date.now() }).catch(() => {}),
+    })
   }
 
   /**
@@ -473,14 +464,8 @@ export class WorktreeEnhanceService {
     }
     const info = await repoInfo(this.git, dir)
     const covering = this.coveringWorktree(dir)
-    // Lazily associate the active session id with an adopted worktree record so
-    // archiving or reopening this session can snapshot-clean and auto-detect it.
-    if (covering !== null && typeof sessionId === 'string' && sessionId.length > 0) {
-      const store = storeOf(covering.commonDir)
-      const rec = await store.get(covering.path)
-      if (rec !== undefined && rec.createdSessionId === null) {
-        void store.patch(rec.id, { createdSessionId: sessionId, lastAccessedAt: Date.now() }).catch(() => {})
-      }
+    if (covering !== null) {
+      void this.touchWorktreeAccess(dir, sessionId)
     }
     const config = info !== null
       ? await discoverEnvConfig(this.git, dir)
@@ -551,37 +536,26 @@ export class WorktreeEnhanceService {
       if (head.exitCode === 0) branch = head.stdout.trim()
     }
     const labelScope = branch.length > 0 ? branch : basename(absDir)
-    const operation = this.runner.begin('action', `${labelScope} · ${action.name}`, absDir)
-    operation.actionName = action.name
     const sourceRoot = info?.root ?? absDir
     const env = {
       DSH_SOURCE_TREE_PATH: sourceRoot,
-      CODEX_SOURCE_TREE_PATH: sourceRoot,
       DSH_WORKTREE_PATH: absDir,
-      CODEX_WORKTREE_PATH: absDir,
       DSH_WORKTREE_BRANCH: branch,
     }
-    this.busyPaths.add(absDir)
-    void (async () => {
-      try {
-        this.runner.log(operation, 'meta', `Running "${action.name}" in ${absDir}\n`)
-        const result = await this.runner.runScript({
-          ctx: this.ctx, operation, cwd: absDir, script: action.command, env,
-          timeoutMs: this.config.setupTimeoutMs, captureEnv: false,
-        })
-        this.runner.finish(operation, result.status === 'succeeded' ? 'succeeded' : result.status === 'cancelled' ? 'cancelled' : 'failed')
-      } finally {
-        this.busyPaths.delete(absDir)
-      }
-    })()
-    return { operationId: operation.id }
+    return this._launchActionOperation({
+      label: `${labelScope} · ${action.name}`,
+      actionName: action.name,
+      cwd: absDir,
+      command: action.command,
+      env,
+    })
   }
 
   /**
    * Handoff: move the calling session into a new worktree, optionally carrying
    * the current checkout's uncommitted changes and refreshing the upstream.
    * @param {import('@deepseek-ai/dsh-agent').Agent} agent - calling agent.
-   * @param {{ name?: string, from?: string, carryChanges?: boolean, fetch?: boolean }} [options]
+   * @param {{ name?: string, from?: string, carryChanges?: boolean, fetch?: boolean, runSetup?: boolean }} [options]
    * @param {AbortSignal} [signal] - cancellation.
    */
   async handoff(agent, options = {}, signal) {
@@ -589,17 +563,23 @@ export class WorktreeEnhanceService {
     const info = await repoInfo(this.git, cwd)
     if (info === null) throw new Error(`not a git repository: ${cwd}`)
     const root = info.root
+    const sessionId = agent?.session?.header?.id
     const operation = this.runner.begin('handoff', options.name ?? 'handoff', root)
     return await this.git.serialized(info.commonDir, async () => {
+      if (typeof sessionId === 'string' && sessionId.length > 0) {
+        this.pendingHandoffSessions.add(sessionId)
+      }
       try {
         let patch = null
         let carriedFiles = 0
+        /** @type {string[]} */
+        let conflicts = []
         if (options.fetch ?? this.config.upstreamRefreshMode === 'best-effort') {
           await fetchUpstream(this.git, root, (stream, text) => this.runner.log(operation, stream, text), signal)
         }
         if (options.carryChanges !== false) {
           this.runner.log(operation, 'meta', 'Packaging uncommitted changes from the source checkout…\n')
-          const packaged = await packageWorkingTree(this.git, root, signal)
+          const packaged = await packageWorkingTree(this.git, root, signal, 'HEAD', this.worktreeExcludePaths())
           patch = packaged.patch
           carriedFiles = packaged.fileCount
           this.runner.log(operation, 'meta', `Packaged ${carriedFiles} changed file(s).\n`)
@@ -607,14 +587,13 @@ export class WorktreeEnhanceService {
         const created = await this.createWorktree(agent, { name: options.name, from: options.from }, signal)
         this.runner.log(operation, 'meta', `Created worktree ${created.branch} at ${created.path}\n`)
         if (patch !== null) {
-          const { writeFile, mkdtemp, rm } = await import('node:fs/promises')
-          const { tmpdir } = await import('node:os')
           const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-apply-'))
           const file = join(dir, 'handoff.patch')
           try {
             await writeFile(file, patch, 'utf8')
             const result = await this.git.run(created.path, ['apply', '--3way', '--', file], { allowedExitCodes: [0, 1], signal })
-            if (result.exitCode !== 0) {
+            conflicts = detectApplyConflicts(result, 'handoff.patch')
+            if (conflicts.length > 0 || result.exitCode !== 0) {
               this.runner.log(operation, 'stderr', `Carried changes applied with conflicts:\n${result.stderr}`)
             } else {
               this.runner.log(operation, 'meta', 'Carried changes applied inside the worktree.\n')
@@ -623,12 +602,19 @@ export class WorktreeEnhanceService {
             await rm(dir, { recursive: true, force: true }).catch(() => {})
           }
         }
-        const record = await this.registerCreated({ ...created, sessionId: agent.session.header.id }, { runSetup: true })
-        this.runner.finish(operation, 'succeeded')
-        return { created, carriedFiles, record }
+        const record = await this.registerCreated(
+          { ...created, sessionId },
+          options.runSetup !== undefined ? { runSetup: options.runSetup } : {},
+        )
+        this.runner.finish(operation, conflicts.length > 0 ? 'failed' : 'succeeded')
+        return { created, carriedFiles, conflicts, record }
       } catch (error) {
         this.runner.finish(operation, 'failed')
         throw error
+      } finally {
+        if (typeof sessionId === 'string' && sessionId.length > 0) {
+          this.pendingHandoffSessions.delete(sessionId)
+        }
       }
     })
   }
@@ -681,7 +667,7 @@ export class WorktreeEnhanceService {
     let nextDir = this.config.worktreeDirectory ?? ''
     if (typeof patch.worktreeDirectory === 'string') {
       const normalized = patch.worktreeDirectory.trim().replace(/\/+$/, '')
-      if (normalized.length > 0 && !isValidRelativeDir(normalized)) {
+      if (normalized.length > 0 && !isValidRelativeWorktreeDir(normalized)) {
         const error = new Error('Worktree directory must be a project-relative path (no leading "/", ".", "..", "\\", or ":", e.g. .agents/worktrees)')
         error.status = 400
         error.code = 'INVALID_WORKTREE_DIRECTORY'
@@ -719,19 +705,18 @@ export class WorktreeEnhanceService {
       }
     }
 
-    const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.trim().length > 0
-      ? process.env.DSH_HOME.trim()
-      : join(homedir(), '.dsh')
-    const file = options.configFilePath ?? join(dshHome, 'plugins', 'dsh-worktree-env', 'config.json')
-    await mkdir(dirname(file), { recursive: true })
-    await writeFile(file, JSON.stringify({
-      worktreeDirectory: this.config.worktreeDirectory ?? '',
-      upstreamRefreshMode: this.config.upstreamRefreshMode,
-      autoCleanupEnabled: this.config.autoCleanupEnabled,
-      keepCount: this.config.keepCount,
-      confirmBeforeDelete: this.config.confirmBeforeDelete,
-    }, null, 2), 'utf8')
+    await writePersistedConfig(this.config, options.configFilePath ?? persistedConfigPath())
     return this.config
+  }
+
+  /** Relative worktree directories excluded when scanning or packaging the source tree. */
+  worktreeExcludePaths() {
+    const dirState = this.worktreeDirectoryState()
+    const out = [DEFAULT_WORKTREE_DIRECTORY]
+    if (isValidRelativeWorktreeDir(dirState.worktreeDirectory) && dirState.worktreeDirectory !== DEFAULT_WORKTREE_DIRECTORY) {
+      out.push(dirState.worktreeDirectory)
+    }
+    return out
   }
 
   /**
@@ -752,7 +737,7 @@ export class WorktreeEnhanceService {
     const branch = request.name ?? `dsh-${agent.session.header.id.slice(0, 8)}-${Date.now().toString(36)}`
     const revision = request.from ?? 'HEAD'
     const baseCommit = (await this.git.check(info.root, ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`], { signal })).trim()
-    const relDir = typeof this.config.worktreeDirectory === 'string' && isValidRelativeDir(this.config.worktreeDirectory)
+    const relDir = isValidRelativeWorktreeDir(this.config.worktreeDirectory)
       ? this.config.worktreeDirectory
       : DEFAULT_WORKTREE_DIRECTORY
     const path = join(info.root, ...relDir.split('/'), branch)
@@ -764,27 +749,12 @@ export class WorktreeEnhanceService {
 
   /**
    * Inspect the source checkout's active branch and dirty file count, excluding
-   * DSH's own worktree pool directory so untracked `.agents/worktrees/` never
-   * falsely marks a clean repository as dirty.
+   * DSH's own worktree pool directory.
    * @param {string} root
    * @param {AbortSignal} [signal]
    */
   async sourceCheckoutStatus(root, signal) {
-    const headRes = await this.git.run(root, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowedExitCodes: [0, 128], signal })
-    const rawHead = headRes.exitCode === 0 ? headRes.stdout.trim() : ''
-    const currentBranch = rawHead.length > 0 && rawHead !== 'HEAD' ? rawHead : null
-    const excludes = [`:(exclude)${DEFAULT_WORKTREE_DIRECTORY}`]
-    const dirState = this.worktreeDirectoryState()
-    if (typeof dirState.worktreeDirectory === 'string' && isValidRelativeDir(dirState.worktreeDirectory) && dirState.worktreeDirectory !== DEFAULT_WORKTREE_DIRECTORY) {
-      excludes.push(`:(exclude)${dirState.worktreeDirectory}`)
-    }
-    const statusRes = await this.git.run(root, ['status', '--porcelain', '--', '.', ...excludes], { allowedExitCodes: [0, 128], signal })
-    const dirtyLines = statusRes.exitCode === 0 ? statusRes.stdout.split('\n').filter(Boolean) : []
-    return {
-      currentBranch,
-      sourceDirty: dirtyLines.length > 0,
-      sourceDirtyCount: dirtyLines.length,
-    }
+    return await sourceCheckoutStatus(this.git, root, this.worktreeDirectoryState().worktreeDirectory, signal)
   }
 
   /**
@@ -795,36 +765,7 @@ export class WorktreeEnhanceService {
    */
   async backflowInfo(id, signal) {
     const record = await this.requireRecord(id)
-    const root = record.repositoryRoot
-    const { currentBranch, sourceDirty, sourceDirtyCount } = await this.sourceCheckoutStatus(root, signal)
-    const porcelain = await this.git.run(root, ['worktree', 'list', '--porcelain'], { allowedExitCodes: [0, 128], signal })
-    const lockedBranches = new Set()
-    if (porcelain.exitCode === 0) {
-      for (const entry of parseWorktreeList(porcelain.stdout)) {
-        if (entry.path !== root && typeof entry.branch === 'string' && entry.branch.length > 0) {
-          lockedBranches.add(entry.branch)
-        }
-      }
-    }
-    const refsRes = await this.git.run(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { allowedExitCodes: [0, 128], signal })
-    const allLocal = refsRes.exitCode === 0 ? refsRes.stdout.split('\n').filter(Boolean) : []
-    const available = allLocal.filter(name => name === currentBranch || !lockedBranches.has(name))
-    const priority = (name) => {
-      if (name === currentBranch) return 0
-      if (name === 'main') return 1
-      if (name === 'master') return 2
-      return 3
-    }
-    available.sort((a, b) => (priority(a) - priority(b)) || a.localeCompare(b))
-    return {
-      worktreeId: record.id,
-      worktreeBranch: record.branch,
-      repositoryRoot: root,
-      currentBranch,
-      sourceDirty,
-      sourceDirtyCount,
-      branches: available,
-    }
+    return await inspectBackflowInfo(this.git, record, this.worktreeDirectoryState().worktreeDirectory, signal)
   }
 
   /**
@@ -837,126 +778,14 @@ export class WorktreeEnhanceService {
   async applyBackflow(id, options = {}, signal) {
     const record = await this.requireRecord(id)
     const store = await this.storeOfRecord(record)
-    return await this.git.serialized(store.commonDir, async () => {
-      const mode = options.mode ?? 'branch'
-      const { patches, fileCount, files } = await backflowPatch(this.git, record, mode, signal)
-      const root = record.repositoryRoot
-      const { currentBranch, sourceDirty, sourceDirtyCount } = await this.sourceCheckoutStatus(root, signal)
-
-      const wantsCreate = options.createBranch === true
-      const rawTarget = typeof options.targetBranch === 'string' && options.targetBranch.trim().length > 0
-        ? options.targetBranch.trim()
-        : null
-      const targetBranch = rawTarget ?? currentBranch
-      const needsSwitch = wantsCreate || (targetBranch !== null && targetBranch !== currentBranch)
-
-      if (patches.length === 0) {
-        return {
-          applied: false, fileCount: 0, conflicts: [], currentBranch, targetBranch,
-          sourceDirty, sourceDirtyCount, message: 'No changes to apply.',
-        }
-      }
-
-      if (wantsCreate) {
-        if (rawTarget === null) {
-          return {
-            applied: false, fileCount, conflicts: [], blockedReason: 'INVALID_BRANCH_NAME',
-            currentBranch, targetBranch: null, sourceDirty, sourceDirtyCount,
-            message: 'New branch name is required.',
-          }
-        }
-        const fmt = await this.git.run(root, ['check-ref-format', '--branch', rawTarget], { allowedExitCodes: [0, 1, 128], signal })
-        if (fmt.exitCode !== 0) {
-          return {
-            applied: false, fileCount, conflicts: [], blockedReason: 'INVALID_BRANCH_NAME',
-            currentBranch, targetBranch: rawTarget, sourceDirty, sourceDirtyCount,
-            message: `Invalid branch name: ${rawTarget}`,
-          }
-        }
-        const exists = await this.git.run(root, ['show-ref', '--verify', '--quiet', `refs/heads/${rawTarget}`], { allowedExitCodes: [0, 1], signal })
-        if (exists.exitCode === 0) {
-          return {
-            applied: false, fileCount, conflicts: [], blockedReason: 'BRANCH_ALREADY_EXISTS',
-            currentBranch, targetBranch: rawTarget, sourceDirty, sourceDirtyCount,
-            message: `Branch already exists: ${rawTarget}`,
-          }
-        }
-      } else if (needsSwitch && targetBranch !== null) {
-        const exists = await this.git.run(root, ['show-ref', '--verify', '--quiet', `refs/heads/${targetBranch}`], { allowedExitCodes: [0, 1], signal })
-        if (exists.exitCode !== 0) {
-          return {
-            applied: false, fileCount, conflicts: [], blockedReason: 'BRANCH_NOT_FOUND',
-            currentBranch, targetBranch, sourceDirty, sourceDirtyCount,
-            message: `Target branch not found: ${targetBranch}`,
-          }
-        }
-        const porcelain = await this.git.run(root, ['worktree', 'list', '--porcelain'], { allowedExitCodes: [0, 128], signal })
-        if (porcelain.exitCode === 0) {
-          const inUse = parseWorktreeList(porcelain.stdout).some(entry => entry.path !== root && entry.branch === targetBranch)
-          if (inUse) {
-            return {
-              applied: false, fileCount, conflicts: [], blockedReason: 'BRANCH_IN_USE',
-              currentBranch, targetBranch, sourceDirty, sourceDirtyCount,
-              message: `Branch "${targetBranch}" is currently checked out in another worktree.`,
-            }
-          }
-        }
-      }
-
-      if (needsSwitch && sourceDirty) {
-        return {
-          applied: false, fileCount, conflicts: [], blockedReason: 'SOURCE_DIRTY_CANNOT_SWITCH',
-          currentBranch, targetBranch, sourceDirty, sourceDirtyCount,
-          message: `Source checkout has ${sourceDirtyCount} uncommitted change(s) on "${currentBranch ?? 'HEAD'}"; commit or stash them before switching branches.`,
-        }
-      }
-
-      const precheck = needsSwitch && !wantsCreate && targetBranch !== null
-        ? await precheckPatchesOnRef(this.git, store.commonDir, `refs/heads/${targetBranch}`, patches, files, signal)
-        : await precheckPatches(this.git, root, patches, signal)
-
-      if (options.dryRun === true || !precheck.ok) {
-        return {
-          applied: false,
-          fileCount,
-          conflicts: precheck.conflicts,
-          currentBranch,
-          targetBranch,
-          sourceDirty,
-          sourceDirtyCount,
-          willSwitchBranch: needsSwitch,
-          createBranch: wantsCreate,
-          message: options.dryRun === true && precheck.ok ? 'Dry run: patches would apply cleanly.' : undefined,
-        }
-      }
-
-      if (needsSwitch && targetBranch !== null) {
-        const prevRef = currentBranch ?? (await this.git.check(root, ['rev-parse', 'HEAD'], { signal })).trim()
-        await this.git.check(root, wantsCreate ? ['checkout', '-b', targetBranch] : ['checkout', targetBranch], { signal })
-        try {
-          await applyPatches(this.git, root, patches, signal)
-        } catch (error) {
-          await this.git.run(root, ['checkout', prevRef], { allowedExitCodes: [0, 1, 128] }).catch(() => {})
-          if (wantsCreate) {
-            await this.git.run(root, ['branch', '-D', targetBranch], { allowedExitCodes: [0, 1, 128] }).catch(() => {})
-          }
-          throw error
-        }
-      } else {
-        await applyPatches(this.git, root, patches, signal)
-      }
-
-      return {
-        applied: true,
-        fileCount,
-        conflicts: [],
-        currentBranch,
-        targetBranch,
-        switchedBranch: needsSwitch,
-        createdBranch: wantsCreate,
-        message: `Applied ${fileCount} changed file(s) onto ${root}${targetBranch ? ` (${targetBranch})` : ''}.`,
-      }
-    })
+    return await this.git.serialized(store.commonDir, () => executeBackflow({
+      git: this.git,
+      commonDir: store.commonDir,
+      record,
+      configuredWorktreeDir: this.worktreeDirectoryState().worktreeDirectory,
+      options,
+      signal,
+    }))
   }
 
   /**
@@ -1098,7 +927,7 @@ export class WorktreeEnhanceService {
     const absPath = resolve(worktreePath)
     const dirState = this.worktreeDirectoryState()
     const pools = new Set([DEFAULT_WORKTREE_DIRECTORY])
-    if (typeof dirState.worktreeDirectory === 'string' && isValidRelativeDir(dirState.worktreeDirectory)) {
+    if (isValidRelativeWorktreeDir(dirState.worktreeDirectory)) {
       pools.add(dirState.worktreeDirectory)
     }
     for (const relDir of pools) {
@@ -1251,12 +1080,104 @@ export class WorktreeEnhanceService {
   }
 
   /**
-   * Handle DSH session archival: save a recovery snapshot and clean up the
-   * archived session's dedicated worktree (when not pinned, busy, or shared
-   * with another active session), then run quota enforcement.
+   * Report running setup/action activities owned by `sessionId` so host session
+   * archival protects them.
+   * @param {string} sessionId
+   */
+  sessionActivity(sessionId) {
+    const index = this.sessionIndex()
+    const own = []
+    for (const [path, entries] of index) {
+      if (entries.some(entry => entry.sessionId === sessionId) && this.busyPaths.has(path)) {
+        own.push({ kind: `dsh-worktree-env setup/action (${path})`, startedAt: Date.now() })
+      }
+    }
+    return own
+  }
+
+  /**
+   * Cancel running operations belonging to worktrees owned by `sessionId`.
+   * @param {string} sessionId
+   */
+  cancelOperationsForSession(sessionId) {
+    const index = this.sessionIndex()
+    const ownedPaths = new Set()
+    for (const [path, entries] of index) {
+      if (entries.some(entry => entry.sessionId === sessionId)) {
+        ownedPaths.add(path)
+      }
+    }
+    if (ownedPaths.size === 0) return
+    for (const [id, operation] of this.runner.operations) {
+      if (operation.status !== 'running') continue
+      if (operation.worktreePath !== null && ownedPaths.has(operation.worktreePath)) {
+        this.runner.cancel(id)
+      }
+    }
+  }
+
+  /** Read one tracked operation by id. */
+  getOperation(id) {
+    return this.runner.get(id)
+  }
+
+  /** Cancel one tracked operation by id. */
+  cancelOperation(id) {
+    this.runner.cancel(id)
+  }
+
+  /** Subscribe to live log entries of one tracked operation. */
+  subscribeOperation(id, listener) {
+    return this.runner.subscribe(id, listener)
+  }
+
+  /** Resolve the Git repository top-level directory for `root`, or null. */
+  async repositoryRootOf(root) {
+    const info = await repoInfo(this.git, root)
+    return info?.root ?? null
+  }
+
+  /**
+   * Record access to a managed worktree (updating `lastAccessedAt` and tracking
+   * associated session IDs so pinned chats created inside the worktree protect it).
+   * @param {string} cwd
+   * @param {string | null | undefined} [sessionId]
+   */
+  async touchWorktreeAccess(cwd, sessionId) {
+    if (typeof cwd !== 'string' || cwd.length === 0) return
+    const covering = this.coveringWorktree(cwd)
+    if (covering === null) return
+    const store = storeOf(covering.commonDir)
+    const rec = await store.get(covering.path)
+    if (rec === undefined) return
+    /** @type {Record<string, unknown>} */
+    const patch = { lastAccessedAt: Date.now() }
+    if (typeof sessionId === 'string' && sessionId.length > 0) {
+      if (rec.createdSessionId === null) patch.createdSessionId = sessionId
+      const existing = Array.isArray(rec.sessionIds) ? rec.sessionIds : []
+      if (!existing.includes(sessionId)) {
+        patch.sessionIds = [...existing, sessionId]
+      }
+    }
+    await store.patch(rec.id, patch).catch(() => {})
+  }
+
+  /** Whether any session associated with a worktree record is pinned. */
+  _isPinnedWorktree(record, pinnedSessions) {
+    if (record.createdSessionId !== null && pinnedSessions.has(record.createdSessionId)) return true
+    if (Array.isArray(record.sessionIds) && record.sessionIds.some(sid => pinnedSessions.has(sid))) return true
+    return false
+  }
+
+  /**
+   * Handle DSH session archival: when `autoCleanupEnabled` is on, save a
+   * recovery snapshot (per `snapshotOnArchive`) and clean up the archived
+   * session's dedicated worktree (when not pinned, busy, or shared with another
+   * active session), then run quota enforcement.
    * @param {string | null | undefined} sessionId
    */
   async handleSessionArchived(sessionId) {
+    if (!this.config.autoCleanupEnabled) return { archived: 0 }
     let archived = 0
     if (typeof sessionId === 'string' && sessionId.length > 0) {
       if (this.unarchivingSessions.has(sessionId)) {
@@ -1273,10 +1194,11 @@ export class WorktreeEnhanceService {
           if (item.status !== 'active' || !item.exists) continue
           if (item.createdSessionId !== sessionId) continue
           if (this.busyPaths.has(item.path)) continue
+          if (this._isPinnedWorktree(item, pinnedSessions)) continue
           const liveOthers = (sessions.get(item.path) ?? []).filter(entry => entry.sessionId !== sessionId)
           if (liveOthers.length > 0) continue
           try {
-            await this.archive(item.id, { snapshot: true })
+            await this.archive(item.id, { snapshot: this.config.snapshotOnArchive })
             archived += 1
           } catch {
             // keep worktree intact if nested repos or git locks prevent removal
@@ -1290,7 +1212,8 @@ export class WorktreeEnhanceService {
 
   /**
    * Enforce the per-repository quota on unarchived worktrees.
-   * Skips worktrees with running operations, live sessions, or pinned sessions.
+   * Skips worktrees with running operations, live sessions, or pinned sessions,
+   * advancing to the next oldest eligible candidate until within `keepCount`.
    */
   async enforceQuota() {
     if (!this.config.autoCleanupEnabled) return { archived: 0 }
@@ -1307,16 +1230,17 @@ export class WorktreeEnhanceService {
     let archived = 0
     for (const list of byRepo.values()) {
       list.sort((left, right) => left.lastAccessedAt - right.lastAccessedAt)
-      const excess = list.length - this.config.keepCount
-      for (let i = 0; i < excess; i += 1) {
+      let remaining = list.length - this.config.keepCount
+      for (let i = 0; i < list.length && remaining > 0; i += 1) {
         const victim = list[i]
         if (this.busyPaths.has(victim.path)) continue
         const liveSessions = sessions.get(victim.path) ?? []
         if (liveSessions.length > 0) continue
-        if (victim.createdSessionId !== null && pinnedSessions.has(victim.createdSessionId)) continue
+        if (this._isPinnedWorktree(victim, pinnedSessions)) continue
         try {
           await this.archive(victim.id)
           archived += 1
+          remaining -= 1
         } catch {
           // nested repos or git failures keep the checkout; try the next candidate
         }
@@ -1386,6 +1310,17 @@ export class WorktreeEnhanceService {
     return { projects }
   }
 
+  /** Validate that `configPath` points to a managed `.agents/environments/*.toml` or the active custom path. */
+  async _resolveManagedConfigPath(projectRoot, info, configPath) {
+    const source = classifyManagedEnvPath(projectRoot, configPath)
+    const discovered = info !== null ? await discoverEnvConfig(this.git, projectRoot) : null
+    const allowedCustom = discovered?.sourcePath !== null && discovered?.sourcePath !== undefined && resolve(discovered.sourcePath) === resolve(configPath)
+    if (source === null && !allowedCustom) {
+      throw new Error(`configPath must point to a .toml file inside .agents/environments`)
+    }
+    return { abs: resolve(configPath), source }
+  }
+
   /**
    * Read the environment config editor payload for one root (or one specific `.toml` file).
    * @param {string} root - repository or project root.
@@ -1395,13 +1330,7 @@ export class WorktreeEnhanceService {
     const info = await repoInfo(this.git, root)
     const projectRoot = info !== null ? info.root : resolve(root)
     if (typeof configPath === 'string' && configPath.length > 0) {
-      const source = classifyManagedEnvPath(projectRoot, configPath)
-      const discovered = info !== null ? await discoverEnvConfig(this.git, projectRoot) : null
-      const allowedCustom = discovered?.sourcePath !== null && discovered?.sourcePath !== undefined && resolve(discovered.sourcePath) === resolve(configPath)
-      if (source === null && !allowedCustom) {
-        throw new Error(`configPath must point to a .toml file inside .agents/environments`)
-      }
-      const abs = resolve(configPath)
+      const { abs, source } = await this._resolveManagedConfigPath(projectRoot, info, configPath)
       const exists = await access(abs, constants.F_OK).then(() => true, () => false)
       const environment = exists
         ? await readEnvConfigFile(abs, source ?? 'custom')
@@ -1447,13 +1376,8 @@ export class WorktreeEnhanceService {
     const projectRoot = info !== null ? info.root : resolve(root)
     let target
     if (typeof configPath === 'string' && configPath.length > 0) {
-      const source = classifyManagedEnvPath(projectRoot, configPath)
-      const discovered = info !== null ? await discoverEnvConfig(this.git, projectRoot) : null
-      const allowedCustom = discovered?.sourcePath !== null && discovered?.sourcePath !== undefined && resolve(discovered.sourcePath) === resolve(configPath)
-      if (source === null && !allowedCustom) {
-        throw new Error(`configPath must point to a .toml file inside .agents/environments`)
-      }
-      target = resolve(configPath)
+      const { abs } = await this._resolveManagedConfigPath(projectRoot, info, configPath)
+      target = abs
     } else {
       const config = info !== null ? await discoverEnvConfig(this.git, projectRoot) : null
       target = config?.sourcePath ?? preferredConfigPath(projectRoot)
@@ -1495,19 +1419,11 @@ export class WorktreeEnhanceService {
     const effective = await this.preferenceFor(info.root)
     this.preferenceCache.set(info.root, effective)
     this.preferenceCache.set(root, effective)
+    const { sourceDirty } = await this.sourceCheckoutStatus(info.root)
+    const policy = { isGitRepo: true, preference: effective, dirty: sourceDirty }
+    this.repoPolicyCache.set(info.root, policy)
+    this.repoPolicyCache.set(root, policy)
     return { repositoryRoot: info.root, commonDir: info.commonDir, override: preference, preference: effective }
-  }
-
-  /**
-   * Whether a worktree path is known to the index.
-   * @param {string} path
-   * @returns {boolean}
-   */
-  isManagedPath(path) {
-    for (const [known] of this.knownPaths) {
-      if (path === known || path.startsWith(`${known}/`)) return true
-    }
-    return false
   }
 
   /**
@@ -1598,11 +1514,34 @@ export class WorktreeEnhanceService {
   }
 
   /**
-   * Refresh the cached preference for one root.
-   * @param {string} root - repository root.
+   * Cached Git repository & cleanliness facts used synchronously by the system
+   * prompt context provider. Returns null until {@link refreshPreference} has
+   * observed `cwd` as a Git repository.
+   * @param {string} cwd
+   * @returns {{ isGitRepo: boolean, preference: 'ask' | 'always' | 'never' | 'dirty', dirty: boolean } | null}
+   */
+  cachedRepoPolicy(cwd) {
+    return this.repoPolicyCache.get(cwd) ?? null
+  }
+
+  /**
+   * Refresh the cached preference and dirty state for one directory.
+   * @param {string} root - repository root or directory.
    */
   async refreshPreference(root) {
-    this.preferenceCache.set(root, await this.preferenceFor(root))
+    const info = await repoInfo(this.git, root)
+    if (info === null) {
+      const policy = { isGitRepo: false, preference: this.config.defaultCreationPreference, dirty: false }
+      this.repoPolicyCache.set(root, policy)
+      return
+    }
+    const preference = await this.preferenceFor(info.root)
+    const { sourceDirty } = await this.sourceCheckoutStatus(info.root)
+    const policy = { isGitRepo: true, preference, dirty: sourceDirty }
+    this.preferenceCache.set(root, preference)
+    this.preferenceCache.set(info.root, preference)
+    this.repoPolicyCache.set(root, policy)
+    this.repoPolicyCache.set(info.root, policy)
   }
 
   /**
@@ -1626,6 +1565,11 @@ export class WorktreeEnhanceService {
    */
   async observeSessionEvent(session, event) {
     if (event.type !== CREATED_RECORD) return
+    const sessionId = session?.header?.id
+    if (typeof sessionId === 'string' && this.pendingHandoffSessions.has(sessionId)) {
+      // handoff() applies carried changes before calling registerCreated(); avoid racing setup.
+      return
+    }
     const data = event.data
     if (data === null || typeof data !== 'object') return
     const created = data
@@ -1636,7 +1580,7 @@ export class WorktreeEnhanceService {
         branch: created.branch,
         baseCommit: typeof created.baseCommit === 'string' ? created.baseCommit : 'unknown',
         repositoryRoot: typeof created.repositoryRoot === 'string' ? created.repositoryRoot : session.header.cwd,
-        sessionId: session.header.id,
+        sessionId,
       })
     } catch (error) {
       // Registration failures must never break the session feed.
@@ -1701,9 +1645,7 @@ export class WorktreeEnhanceService {
   scriptEnv(record) {
     return {
       DSH_SOURCE_TREE_PATH: record.repositoryRoot,
-      CODEX_SOURCE_TREE_PATH: record.repositoryRoot,
       DSH_WORKTREE_PATH: record.path,
-      CODEX_WORKTREE_PATH: record.path,
       DSH_WORKTREE_BRANCH: record.branch,
     }
   }

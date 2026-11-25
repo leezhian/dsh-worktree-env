@@ -8,8 +8,8 @@ DeepSeek Harness (DSH) 原生 Worktree 增强插件，在 DSH 内置 Git 工作�
 
 - **本地环境编排**：读取项目内 `.agents/environments/*.toml`（与 DSH 内置 `.agents/worktrees` 同目录，与 `.codex/` 完全隔离），支持分平台 `[setup]` / `[cleanup]` 脚本（默认 / macOS / Linux / Windows）、实时 SSE 日志流、POSIX 环境变量差集自动捕获。
 - **快捷操作（Actions）**：支持自定义名称、图标（工具 / 运行 / 调试 / 测试）、多行脚本与平台过滤，直接显示在**会话顶部栏**一键执行——优先拉起 DSH 原生交互终端运行，未启用原生终端时自动降级到右侧面板日志页签（或悬浮日志抽屉）。
-- **带改动转入 & 三方回流**：无损打包暂存/未暂存/未跟踪改动转入新 worktree（可选 `git fetch`），支持 `git apply --3way` 冲突预检与回流主目录。
-- **无损快照归档与恢复**：归档前自动写入隐藏 Git 快照（`refs/dsh-worktree-env/snapshots/…`），拦截嵌套仓库与子模块，恢复时还原未提交改动并按配置重跑 setup。
+- **带改动转入 & 三方回流**：无损打包暂存/未暂存/未跟踪改动转入新 worktree（可选 `git fetch`），支持 `git apply --3way` 冲突预检、目标分支选择/新建分支与源目录未提交保护。
+- **无损快照归档与自动恢复**：归档或自动清理前自动写入隐藏 Git 快照（`refs/dsh-worktree-env/snapshots/…`），拦截嵌套仓库与已初始化子模块，重开已归档会话时顶部栏一键恢复未提交改动并按配置重跑 setup（恢复后清理已消费快照引用）。
 - **设置与托管工作树**：工作树项目内相对目录（默认 `.agents/worktrees`）直接同步官方内置 `@deepseek-ai/dsh-experimental-worktree`，按 `keepCount` 自动清理旧 worktree（保护已置顶与进行中的会话），且仅扫描 DSH 创建的工作树。
 - **实时多语言界面**：无缝接入 DSH 语言服务，随系统设置实时切换全部 8 种内置语言（中文、English、日本語、Español、Français、Deutsch、Русский、Português）。
 - **原生集成**：6 个 Agent 工具、`systemPrompt` 上下文、`shellEnv` 环境变量注入、`/worktree` 命令、侧边栏全局 **Worktrees** 面板（设置 & 环境）、会话顶部栏快捷操作与会话菜单入口。

@@ -9,6 +9,7 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { PREFERENCES } from './config.js'
 
 /**
  * One managed worktree record. Plain JSON, tolerant of unknown fields.
@@ -79,7 +80,7 @@ export class RepoStore {
             }
           }
         }
-        if (typeof parsed.preference === 'string' && ['ask', 'always', 'never', 'dirty'].includes(parsed.preference)) {
+        if (typeof parsed.preference === 'string' && PREFERENCES.includes(/** @type {any} */ (parsed.preference))) {
           this.preference = parsed.preference
         }
       }
@@ -198,7 +199,8 @@ export class RepoStore {
   }
 
   /**
-   * Write the captured environment as a `KEY=value` shell file.
+   * Write the captured environment as an `export KEY=value` shell file so
+   * sourcing it in a POSIX shell propagates variables to child commands.
    * @param {string} branch - branch name.
    * @param {Record<string, string>} env - captured variables.
    */
@@ -206,7 +208,7 @@ export class RepoStore {
     await mkdir(this.dir, { recursive: true })
     const lines = ['# Captured by dsh-worktree setup; safe to source in POSIX shells.']
     for (const [key, value] of Object.entries(env)) {
-      lines.push(`${key}=${singleQuote(value)}`)
+      lines.push(`export ${key}=${singleQuote(value)}`)
     }
     await writeFile(this.envFile(branch), `${lines.join('\n')}\n`, 'utf8')
   }
@@ -221,7 +223,7 @@ export class RepoStore {
       const text = await readFile(this.envFile(branch), 'utf8')
       const env = {}
       for (const line of text.split('\n')) {
-        const match = /^([A-Za-z_][A-Za-z0-9_]*)='(.*)'$/.exec(line)
+        const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)='(.*)'$/.exec(line)
         if (match !== null) env[match[1]] = match[2].replace(/'\\''/g, "'")
       }
       return env

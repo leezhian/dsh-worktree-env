@@ -14,6 +14,19 @@ import { drainStream } from './git.js'
 /** Environment keys that never enter a captured delta. */
 const VOLATILE_KEYS = new Set(['PWD', 'OLDPWD', 'SHLVL', '_', 'SSH_AUTH_SOCK', 'TMPDIR', 'TMP', 'TEMP'])
 const SENSITIVE_KEY = /(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i
+/** Host LLM / DSH credentials scrubbed from child script environments by default. */
+const HOST_CREDENTIAL_TOMBSTONES = Object.fromEntries([
+  'DEEPSEEK_API_KEY',
+  'DEEPSEEK_TOKEN',
+  'DEEPSEEK_AUTH_TOKEN',
+  'DSH_API_KEY',
+  'DSH_TOKEN',
+  'DSH_AUTH_TOKEN',
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+].map(key => [key, undefined]))
 const MAX_LOG_CHARS = 400_000
 
 /**
@@ -169,7 +182,7 @@ export class EnvRunner {
       child = ctx.subprocess.spawn({
         argv: [program, ...shellArgs],
         cwd,
-        env: { ...env, ...(captureDir !== null ? { __DSH_CAPTURE_DIR: captureDir } : {}) },
+        env: { ...HOST_CREDENTIAL_TOMBSTONES, ...env, ...(captureDir !== null ? { __DSH_CAPTURE_DIR: captureDir } : {}) },
         graceMs: 3_000,
         signal: timeout,
         stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },

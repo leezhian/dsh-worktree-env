@@ -37,6 +37,8 @@ window.__ModuleLoader__.load({
     const API = '/api/dsh-worktree-env'
     const LOG_TAB_ID = 'dsh-worktree-env-logs'
     const LOG_TAB_KIND = 'dsh-worktree-env-logs'
+    const GLOBAL_SESSION_KEY = '__global__'
+    const NEW_BRANCH_SENTINEL = '__new__'
 
     const zh = {
       'panel.title': 'Worktrees',
@@ -1810,21 +1812,10 @@ window.__ModuleLoader__.load({
       return text.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])/g, '')
     }
 
-    function shortRepo(root) {
-      if (typeof root !== 'string') return ''
-      const parts = root.split(/[\\/]/).filter(Boolean)
-      return parts.slice(-2).join('/')
-    }
     function repoName(root) {
       if (typeof root !== 'string') return ''
       const parts = root.split(/[\\/]/).filter(Boolean)
       return parts[parts.length - 1] ?? root
-    }
-    function setupTone(state) {
-      if (state === 'succeeded') return 'ok'
-      if (state === 'failed') return 'err'
-      if (state === 'running') return 'warn'
-      return 'off'
     }
     function copyText(text) {
       try { void navigator.clipboard?.writeText?.(text) } catch { /* ignore */ }
@@ -1923,19 +1914,17 @@ window.__ModuleLoader__.load({
       return { lines, status, opLabel }
     }
 
-    /** ---- Live SSE operation log drawer (fallback overlay when right sidebar is absent) ---- */
-    function LogDrawer({ operationId, label, icon, minimized = false, onToggleMinimize, onClose, onSettled, t }) {
-      const { lines, status, opLabel } = useOperationStream(operationId, label, onSettled)
+    function useAutoScrollLog(operationId, lines, active = true) {
       const [copied, setCopied] = useState(false)
       const boxRef = useRef(null)
       const stickRef = useRef(true)
 
       useEffect(() => { stickRef.current = true }, [operationId])
       useEffect(() => {
-        if (minimized || !stickRef.current) return
+        if (!active || !stickRef.current) return
         const el = boxRef.current
         if (el) el.scrollTo({ top: el.scrollHeight })
-      }, [lines, minimized])
+      }, [lines, active])
 
       const onScroll = () => {
         const el = boxRef.current
@@ -1949,6 +1938,20 @@ window.__ModuleLoader__.load({
         setTimeout(() => setCopied(false), 1500)
       }
 
+      return { copied, boxRef, onScroll, copyAll }
+    }
+
+    function renderLogOutput(lines, boxRef, onScroll, t) {
+      return h('div', { className: 'dshwt-drawer-body', ref: boxRef, onScroll },
+        lines.length === 0
+          ? h('span', { 'data-stream': 'meta' }, t('logs.empty'))
+          : lines.map((entry, idx) => h('span', { key: idx, 'data-stream': entry.stream }, stripAnsi(entry.text))))
+    }
+
+    /** ---- Live SSE operation log drawer (fallback overlay when right sidebar is absent) ---- */
+    function LogDrawer({ operationId, label, icon, minimized = false, onToggleMinimize, onClose, onSettled, t }) {
+      const { lines, status, opLabel } = useOperationStream(operationId, label, onSettled)
+      const { copied, boxRef, onScroll, copyAll } = useAutoScrollLog(operationId, lines, !minimized)
       const statusText = t(`logs.status.${status}`) || status
 
       return h('div', {
@@ -2010,11 +2013,7 @@ window.__ModuleLoader__.load({
               onClick: onClose,
             }, h(CloseIcon, { size: 15 }))))),
       !minimized
-        ? h('div', { className: 'dshwt-drawer-body-wrap' },
-          h('div', { className: 'dshwt-drawer-body', ref: boxRef, onScroll },
-            lines.length === 0
-              ? h('span', { 'data-stream': 'meta' }, t('logs.empty'))
-              : lines.map((entry, idx) => h('span', { key: idx, 'data-stream': entry.stream }, stripAnsi(entry.text)))))
+        ? h('div', { className: 'dshwt-drawer-body-wrap' }, renderLogOutput(lines, boxRef, onScroll, t))
         : null)
     }
 
@@ -2042,7 +2041,7 @@ window.__ModuleLoader__.load({
           (value) => {
             if (cancelled) return
             setMeta(value)
-            const initial = value?.currentBranch ?? value?.branches?.[0] ?? '__new__'
+            const initial = value?.currentBranch ?? value?.branches?.[0] ?? NEW_BRANCH_SENTINEL
             setBranchChoice(initial)
             setNewBranchName('')
             setLoadingMeta(false)
@@ -2056,7 +2055,7 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true }
       }, [target.id])
 
-      const isCreating = branchChoice === '__new__'
+      const isCreating = branchChoice === NEW_BRANCH_SENTINEL
       const effectiveBranch = isCreating ? newBranchName.trim() : (branchChoice || meta?.currentBranch || '')
       const willSwitch = meta !== null && (isCreating || (effectiveBranch.length > 0 && effectiveBranch !== meta.currentBranch))
 
@@ -2193,7 +2192,7 @@ window.__ModuleLoader__.load({
               },
               (meta.branches ?? []).map(branch => h('option', { key: branch, value: branch },
                 branch === meta.currentBranch ? t('modal.apply.branchCurrent', { branch }) : branch)),
-              h('option', { value: '__new__' }, t('modal.apply.branchNewOption'))),
+              h('option', { value: NEW_BRANCH_SENTINEL }, t('modal.apply.branchNewOption'))),
               isCreating
                 ? h('input', {
                   className: 'dshwt-input',
@@ -2255,7 +2254,7 @@ window.__ModuleLoader__.load({
     /** ---- Right-sidebar Action Log tab (`sidebar.right.pane.tab`, opened on demand from top bar) ---- */
     function ActionLogTabTitle(props) {
       const { t } = useLocale()
-      const sessionId = props?.sessionId ?? '__global__'
+      const sessionId = props?.sessionId ?? GLOBAL_SESSION_KEY
       const bucket = useSessionLogs(sessionId)
       const current = bucket.ops.find(o => o.id === bucket.activeId) ?? bucket.ops[0] ?? null
       const title = current?.actionName || current?.label || t('logs.title')
@@ -2269,19 +2268,15 @@ window.__ModuleLoader__.load({
     function ActionLogPane(ctx) {
       return function LogTabBody(props) {
         const { t } = useLocale()
-        const sessionId = props?.sessionId ?? '__global__'
+        const sessionId = props?.sessionId ?? GLOBAL_SESSION_KEY
         const bucket = useSessionLogs(sessionId)
         const current = bucket.ops.find(o => o.id === bucket.activeId) ?? bucket.ops[0] ?? null
         const [rerunning, setRerunning] = useState(false)
-        const [copied, setCopied] = useState(false)
-        const boxRef = useRef(null)
-        const stickRef = useRef(true)
 
         // Hydrate running backend ops if the tab survived a page reload
         useEffect(() => {
-          if (bucket.ops.length > 0 || sessionId === '__global__') return
-          const summary = ctx.get('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId]
-          const cwd = extractSummaryCwd(summary)
+          if (bucket.ops.length > 0 || sessionId === GLOBAL_SESSION_KEY) return
+          const cwd = extractSummaryCwd(sessionSummaryOf(ctx, sessionId))
           const params = [`sessionId=${enc(sessionId)}`]
           if (typeof cwd === 'string' && cwd.length > 0) params.push(`cwd=${enc(cwd)}`)
           void api(`/session-actions?${params.join('&')}`).then((value) => {
@@ -2305,25 +2300,7 @@ window.__ModuleLoader__.load({
           current?.label ?? '',
           () => notifyEnvChanged(),
         )
-
-        useEffect(() => { stickRef.current = true }, [current?.id])
-        useEffect(() => {
-          if (!stickRef.current) return
-          const el = boxRef.current
-          if (el) el.scrollTo({ top: el.scrollHeight })
-        }, [lines])
-
-        const onScroll = () => {
-          const el = boxRef.current
-          if (!el) return
-          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-        }
-
-        const copyAll = () => {
-          copyText(lines.map(l => stripAnsi(l.text)).join(''))
-          setCopied(true)
-          setTimeout(() => setCopied(false), 1500)
-        }
+        const { copied, boxRef, onScroll, copyAll } = useAutoScrollLog(current?.id ?? null, lines, true)
 
         const rerun = async () => {
           if (!current?.actionName || rerunning) return
@@ -2332,7 +2309,7 @@ window.__ModuleLoader__.load({
             const result = await api('/actions/run', {
               method: 'POST',
               body: JSON.stringify({
-                sessionId: sessionId !== '__global__' ? sessionId : undefined,
+                sessionId: sessionId !== GLOBAL_SESSION_KEY ? sessionId : undefined,
                 cwd: current.cwd ?? undefined,
                 action: current.actionName,
               }),
@@ -2415,11 +2392,7 @@ window.__ModuleLoader__.load({
               op.icon ? h(ActionIcon, { kind: op.icon, size: 13, outline: true }) : null,
               h('span', null, op.actionName || op.label))))
             : null,
-          h('div', { className: 'dshwt-rlog-body-wrap' },
-            h('div', { className: 'dshwt-drawer-body', ref: boxRef, onScroll },
-              lines.length === 0
-                ? h('span', { 'data-stream': 'meta' }, t('logs.empty'))
-                : lines.map((entry, idx) => h('span', { key: idx, 'data-stream': entry.stream }, stripAnsi(entry.text))))))
+          h('div', { className: 'dshwt-rlog-body-wrap' }, renderLogOutput(lines, boxRef, onScroll, t)))
       }
     }
 
@@ -2470,13 +2443,13 @@ window.__ModuleLoader__.load({
     async function pickProjectDirectory() {
       const desktop = typeof globalThis !== 'undefined' ? globalThis.__DSH_DIRECTORY_PICKER__ : undefined
       if (typeof desktop?.pick === 'function') return await desktop.pick()
-      const uiWorkspace = NS_STATE.ctx?.get?.('uiWorkspace')
+      const uiWorkspace = CLIENT_STATE.ctx?.get?.('uiWorkspace')
       if (typeof uiWorkspace?.pickDirectory === 'function') return await uiWorkspace.pickDirectory()
       return undefined
     }
 
     async function registerProjectWorkspace(path) {
-      const workspaces = NS_STATE.ctx?.get?.('workspaces')
+      const workspaces = CLIENT_STATE.ctx?.get?.('workspaces')
       if (typeof workspaces?.create === 'function') {
         await workspaces.create({ path })
         return true
@@ -3105,9 +3078,7 @@ window.__ModuleLoader__.load({
                   ? h('div', { className: 'dshwt-env-children' },
                     project.environments.map(env => {
                       const label = env.valid ? (env.name || env.fileName) : t('env.parseError')
-                      const subtitle = env.valid
-                        ? (env.fileName !== label ? env.fileName : env.fileName)
-                        : env.fileName
+                      const subtitle = env.fileName
                       return h('button', {
                         key: env.configPath,
                         type: 'button',
@@ -3174,7 +3145,7 @@ window.__ModuleLoader__.load({
     }
 
     async function openWorktreeSession(item) {
-      const ctx = NS_STATE.ctx
+      const ctx = CLIENT_STATE.ctx
       const sessions = ctx?.get?.('sessions')
       const uiWorkspace = ctx?.get?.('uiWorkspace')
       if (sessions === undefined || typeof sessions.create !== 'function') {
@@ -3280,6 +3251,22 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const runSetup = async (item) => {
+        setBusyId(item.id)
+        setError(null)
+        try {
+          const res = await api(`/worktrees/${enc(item.id)}/setup?async=1`, { method: 'POST', body: JSON.stringify({ async: true }) })
+          if (res?.operationId) {
+            openLogDrawer({ id: res.operationId, label: `${item.branch} · setup`, icon: 'tool' })
+          }
+          await refresh()
+        } catch (err) {
+          setError(err.message)
+        } finally {
+          setBusyId(null)
+        }
+      }
+
       const removeWorktree = async (item) => {
         setBusyId(item.id)
         setError(null)
@@ -3362,6 +3349,17 @@ window.__ModuleLoader__.load({
                         h('div', { className: 'dshwt-managed-name' }, item.branch),
                         h('div', { className: 'dshwt-managed-path', title: item.path }, item.path)),
                       h('div', { className: 'dshwt-managed-acts' },
+                        item.envSourcePath !== null || item.setupState !== 'not-configured'
+                          ? h(Hint, { label: t('panel.act.setup'), side: 'top' },
+                            h('button', {
+                              type: 'button',
+                              className: 'dshwt-icon-btn',
+                              disabled: rowBusy,
+                              title: hasNativeTooltip ? undefined : t('panel.act.setup'),
+                              'aria-label': t('panel.act.setup'),
+                              onClick: () => void runSetup(item),
+                            }, h(ActionIcon, { kind: 'tool', size: 15, outline: true })))
+                          : null,
                         h(Hint, { label: t('settings.managed.newChat'), side: 'top' },
                           h('button', {
                             type: 'button',
@@ -3631,7 +3629,6 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('settings')
 
       return h('div', { className: 'dshwt-page' },
-        h(StyleTag),
         h('div', { className: 'dshwt-col' },
           h('header', { className: 'dshwt-head' },
             h('div', { className: 'dshwt-head-main' },
@@ -3682,7 +3679,7 @@ window.__ModuleLoader__.load({
       const lowerShell = String(shellName).toLowerCase()
       const isPowerShell = lowerShell.includes('powershell') || lowerShell.includes('pwsh')
       const isCmd = lowerShell === 'cmd' || lowerShell.endsWith('cmd.exe')
-      const needsEnvVars = /(?:DSH|CODEX)_(?:SOURCE_TREE_PATH|WORKTREE_PATH|WORKTREE_BRANCH)\b/.test(cmd)
+      const needsEnvVars = /\bDSH_(?:SOURCE_TREE_PATH|WORKTREE_PATH|WORKTREE_BRANCH)\b/.test(cmd)
       const targetCwd = typeof info?.cwd === 'string' && info.cwd.length > 0 ? info.cwd : null
       const needsCd = targetCwd !== null && typeof termCwd === 'string' && termCwd.length > 0 && termCwd !== targetCwd
       const sourceRoot = info?.repositoryRoot ?? targetCwd ?? ''
@@ -3693,7 +3690,7 @@ window.__ModuleLoader__.load({
       if (isPowerShell) {
         if (needsCd) prefixes.push(`Set-Location -LiteralPath ${psQuote(targetCwd)}`)
         if (needsEnvVars) {
-          prefixes.push(`$env:DSH_SOURCE_TREE_PATH=${psQuote(sourceRoot)}; $env:CODEX_SOURCE_TREE_PATH=${psQuote(sourceRoot)}; $env:DSH_WORKTREE_PATH=${psQuote(worktreePath)}; $env:CODEX_WORKTREE_PATH=${psQuote(worktreePath)}; $env:DSH_WORKTREE_BRANCH=${psQuote(branch)}`)
+          prefixes.push(`$env:DSH_SOURCE_TREE_PATH=${psQuote(sourceRoot)}; $env:DSH_WORKTREE_PATH=${psQuote(worktreePath)}; $env:DSH_WORKTREE_BRANCH=${psQuote(branch)}`)
         }
         return prefixes.length > 0 ? `${prefixes.join('; ')}; ${cmd}` : cmd
       }
@@ -3701,7 +3698,7 @@ window.__ModuleLoader__.load({
       if (isCmd) {
         if (needsCd) prefixes.push(`cd /d "${targetCwd}"`)
         if (needsEnvVars) {
-          prefixes.push(`set "DSH_SOURCE_TREE_PATH=${sourceRoot}" && set "CODEX_SOURCE_TREE_PATH=${sourceRoot}" && set "DSH_WORKTREE_PATH=${worktreePath}" && set "CODEX_WORKTREE_PATH=${worktreePath}" && set "DSH_WORKTREE_BRANCH=${branch}"`)
+          prefixes.push(`set "DSH_SOURCE_TREE_PATH=${sourceRoot}" && set "DSH_WORKTREE_PATH=${worktreePath}" && set "DSH_WORKTREE_BRANCH=${branch}"`)
         }
         return prefixes.length > 0 ? `${prefixes.join(' && ')} && ${cmd}` : cmd
       }
@@ -3712,10 +3709,21 @@ window.__ModuleLoader__.load({
         prefixes.push(`. ${posixQuote(info.envFile)}`)
       }
       if (needsEnvVars) {
-        prefixes.push(`export DSH_SOURCE_TREE_PATH=${posixQuote(sourceRoot)} CODEX_SOURCE_TREE_PATH=${posixQuote(sourceRoot)} DSH_WORKTREE_PATH=${posixQuote(worktreePath)} CODEX_WORKTREE_PATH=${posixQuote(worktreePath)} DSH_WORKTREE_BRANCH=${posixQuote(branch)}`)
+        prefixes.push(`export DSH_SOURCE_TREE_PATH=${posixQuote(sourceRoot)} DSH_WORKTREE_PATH=${posixQuote(worktreePath)} DSH_WORKTREE_BRANCH=${posixQuote(branch)}`)
       }
       if (prefixes.length === 0) return cmd
       return cmd.includes('\n') ? `${prefixes.join(' && ')}\n${cmd}` : `${prefixes.join(' && ')} && ${cmd}`
+    }
+
+    function resolveTerminalContentId(sidebarRight, sessionId, opened) {
+      const occ = sidebarRight?.tabDomain?.occurrence?.(sessionId, { id: opened.id })
+      const address = occ?.navigation?.getSnapshot?.()?.address
+      return address ?? opened.contentId
+    }
+
+    function sessionSummaryOf(ctx, sessionId) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
+      return ctx?.get?.('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId]
     }
 
     function canUseNativeTerminal(ctx, sessionId) {
@@ -3746,7 +3754,7 @@ window.__ModuleLoader__.load({
       const opened = (sidebarRight.tabsIn(sessionId) ?? []).find(tab => tab.kind === 'terminal' && !before.has(tab.id))
       if (opened === undefined) return false
 
-      const contentId = sidebarRight.tabDomain?.occurrence?.(sessionId, { id: opened.id })?.navigation?.getSnapshot?.()?.address ?? opened.contentId
+      const contentId = resolveTerminalContentId(sidebarRight, sessionId, opened)
       const termView = webTerminals.view(sessionId, opened.id, contentId)
       if (termView === undefined || typeof termView.write !== 'function') return false
 
@@ -3795,11 +3803,11 @@ window.__ModuleLoader__.load({
       return function HeaderActions(props) {
         const { t } = useLocale()
         const sessionId = props?.sessionId ?? props?.id ?? null
-        const sessionLogs = useSessionLogs(sessionId ?? '__global__')
+        const sessionLogs = useSessionLogs(sessionId ?? GLOBAL_SESSION_KEY)
         const nativeRunning = useNativeTerminalActions(ctx, sessionId)
         const summary = typeof props?.useSessions === 'function'
           ? props.useSessions(state => (sessionId ? state?.byId?.[sessionId] : undefined))
-          : (sessionId ? ctx.get('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId] : undefined)
+          : sessionSummaryOf(ctx, sessionId)
         const cwd = props?.cwd ?? extractSummaryCwd(summary)
 
         const [info, setInfo] = useState(null)
@@ -3819,10 +3827,10 @@ window.__ModuleLoader__.load({
             reconcileNativeTerminals(ctx)
             setEnvTick(n => n + 1)
           }
-          NS_STATE.envListeners.add(bump)
+          CLIENT_STATE.envListeners.add(bump)
           if (typeof window !== 'undefined') window.addEventListener('focus', bump)
           return () => {
-            NS_STATE.envListeners.delete(bump)
+            CLIENT_STATE.envListeners.delete(bump)
             if (typeof window !== 'undefined') window.removeEventListener('focus', bump)
           }
         }, [])
@@ -4063,34 +4071,27 @@ window.__ModuleLoader__.load({
           error !== null ? h('div', { className: 'dshwt-hdr-menu-err', role: 'alert' }, error) : null))
           : null
 
+        const primaryButton = primary !== null
+          ? h(Hint, { label: primaryTitle, side: 'bottom' },
+            h('button', {
+              type: 'button',
+              className: 'dshwt-hdr-btn',
+              disabled: starting,
+              title: hasNativeTooltip ? undefined : primaryTitle,
+              'aria-label': primaryTitle,
+              onClick: () => void runAction(primary),
+            },
+            h(ActionIcon, { kind: primary.icon ?? 'tool', size: 15, outline: true }),
+            h('span', { className: 'dshwt-hdr-label' }, primary.name),
+            primaryRunning ? h('span', { className: 'dshwt-hdr-dot', title: t('header.actions.running') }) : null))
+          : null
+
         return h('div', { className: 'dshwt-hdr-wrap', ref: wrapRef },
-          actions.length === 1 && primary !== null
-            ? h(Hint, { label: primaryTitle, side: 'bottom' },
-              h('button', {
-                type: 'button',
-                className: 'dshwt-hdr-btn',
-                disabled: starting,
-                title: hasNativeTooltip ? undefined : primaryTitle,
-                'aria-label': primaryTitle,
-                onClick: () => void runAction(primary),
-              },
-              h(ActionIcon, { kind: primary.icon ?? 'tool', size: 15, outline: true }),
-              h('span', { className: 'dshwt-hdr-label' }, primary.name),
-              primaryRunning ? h('span', { className: 'dshwt-hdr-dot', title: t('header.actions.running') }) : null))
-            : primary !== null
+          actions.length === 1
+            ? primaryButton
+            : primaryButton !== null
               ? h('div', { className: 'dshwt-hdr-split' },
-                h(Hint, { label: primaryTitle, side: 'bottom' },
-                  h('button', {
-                    type: 'button',
-                    className: 'dshwt-hdr-btn',
-                    disabled: starting,
-                    title: hasNativeTooltip ? undefined : primaryTitle,
-                    'aria-label': primaryTitle,
-                    onClick: () => void runAction(primary),
-                  },
-                  h(ActionIcon, { kind: primary.icon ?? 'tool', size: 15, outline: true }),
-                  h('span', { className: 'dshwt-hdr-label' }, primary.name),
-                  primaryRunning ? h('span', { className: 'dshwt-hdr-dot', title: t('header.actions.running') }) : null)),
+                primaryButton,
                 h(Hint, { label: t('header.actions.menu'), side: 'bottom' },
                   h('button', {
                     type: 'button',
@@ -4132,8 +4133,7 @@ window.__ModuleLoader__.load({
     }
 
     function sessionCwdOf(ctx, sessionId) {
-      const summary = ctx.get('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId]
-      return extractSummaryCwd(summary)
+      return extractSummaryCwd(sessionSummaryOf(ctx, sessionId))
     }
 
     function SessionMenuRows(ctx) {
@@ -4154,8 +4154,8 @@ window.__ModuleLoader__.load({
         const sessionId = props.sessionId ?? props.id
         useEffect(() => {
           const bump = () => setEnvTick(n => n + 1)
-          NS_STATE.envListeners.add(bump)
-          return () => { NS_STATE.envListeners.delete(bump) }
+          CLIENT_STATE.envListeners.add(bump)
+          return () => { CLIENT_STATE.envListeners.delete(bump) }
         }, [])
         useEffect(() => {
           if (typeof sessionId !== 'string') return
@@ -4243,7 +4243,7 @@ window.__ModuleLoader__.load({
     }
 
     /** ---- locale & shared log state plumbing ---- */
-    const NS_STATE = {
+    const CLIENT_STATE = {
       dicts: DICTS,
       ctx: null,
       ctxLocale: null,
@@ -4261,7 +4261,7 @@ window.__ModuleLoader__.load({
     }
 
     function notifyNativeTerminalsChanged() {
-      for (const listener of [...NS_STATE.terminalListeners]) {
+      for (const listener of [...CLIENT_STATE.terminalListeners]) {
         try { listener() } catch { /* ignore */ }
       }
     }
@@ -4282,7 +4282,7 @@ window.__ModuleLoader__.load({
     function reconcileNativeTerminals(ctx) {
       const sidebarRight = ctx?.get?.('sidebarRight')
       let changed = false
-      for (const [sid, actionMap] of [...NS_STATE.nativeTerminals.entries()]) {
+      for (const [sid, actionMap] of [...CLIENT_STATE.nativeTerminals.entries()]) {
         for (const [actionName, entries] of [...actionMap.entries()]) {
           const alive = []
           for (const entry of entries) {
@@ -4296,7 +4296,7 @@ window.__ModuleLoader__.load({
           if (alive.length === 0) actionMap.delete(actionName)
           else if (alive.length !== entries.length) actionMap.set(actionName, alive)
         }
-        if (actionMap.size === 0) NS_STATE.nativeTerminals.delete(sid)
+        if (actionMap.size === 0) CLIENT_STATE.nativeTerminals.delete(sid)
       }
       if (changed) notifyNativeTerminalsChanged()
     }
@@ -4304,10 +4304,10 @@ window.__ModuleLoader__.load({
     function trackNativeTerminal(ctx, sessionId, actionName, tabId, contentId, termView) {
       if (typeof sessionId !== 'string' || sessionId.length === 0) return
       if (typeof actionName !== 'string' || actionName.length === 0) return
-      let actionMap = NS_STATE.nativeTerminals.get(sessionId)
+      let actionMap = CLIENT_STATE.nativeTerminals.get(sessionId)
       if (!actionMap) {
         actionMap = new Map()
-        NS_STATE.nativeTerminals.set(sessionId, actionMap)
+        CLIENT_STATE.nativeTerminals.set(sessionId, actionMap)
       }
       const list = actionMap.get(actionName) ?? []
       const unsub = termView?.state?.subscribe?.(() => reconcileNativeTerminals(ctx))
@@ -4320,7 +4320,7 @@ window.__ModuleLoader__.load({
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false
       if (typeof actionName !== 'string' || actionName.length === 0) return false
       reconcileNativeTerminals(ctx)
-      const entries = NS_STATE.nativeTerminals.get(sessionId)?.get(actionName)
+      const entries = CLIENT_STATE.nativeTerminals.get(sessionId)?.get(actionName)
       if (!entries || entries.length === 0) return false
       const entry = entries[entries.length - 1]
       const sidebarRight = ctx?.get?.('sidebarRight')
@@ -4347,21 +4347,21 @@ window.__ModuleLoader__.load({
     }
 
     function clearAllNativeTerminals() {
-      for (const actionMap of NS_STATE.nativeTerminals.values()) {
+      for (const actionMap of CLIENT_STATE.nativeTerminals.values()) {
         for (const entries of actionMap.values()) {
           for (const entry of entries) {
             try { entry.unsub?.() } catch { /* ignore */ }
           }
         }
       }
-      NS_STATE.nativeTerminals.clear()
+      CLIENT_STATE.nativeTerminals.clear()
       notifyNativeTerminalsChanged()
     }
 
     function snapshotNativeTerminals(ctx, sessionId) {
       const map = new Map()
       if (typeof sessionId !== 'string' || sessionId.length === 0) return map
-      const actionMap = NS_STATE.nativeTerminals.get(sessionId)
+      const actionMap = CLIENT_STATE.nativeTerminals.get(sessionId)
       if (!actionMap || actionMap.size === 0) return map
       const sidebarRight = ctx?.get?.('sidebarRight')
       for (const [actionName, entries] of actionMap.entries()) {
@@ -4376,45 +4376,45 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         setRunning(snapshotNativeTerminals(ctx, sessionId))
         const onUpdate = () => setRunning(snapshotNativeTerminals(ctx, sessionId))
-        NS_STATE.terminalListeners.add(onUpdate)
-        return () => { NS_STATE.terminalListeners.delete(onUpdate) }
+        CLIENT_STATE.terminalListeners.add(onUpdate)
+        return () => { CLIENT_STATE.terminalListeners.delete(onUpdate) }
       }, [ctx, sessionId])
       return running
     }
 
     function notifyEnvChanged() {
-      for (const listener of [...NS_STATE.envListeners]) {
+      for (const listener of [...CLIENT_STATE.envListeners]) {
         try { listener() } catch { /* ignore */ }
       }
     }
 
     function notifyDrawerChanged() {
-      const snap = { ...NS_STATE.drawer }
-      for (const listener of [...NS_STATE.drawerListeners]) {
+      const snap = { ...CLIENT_STATE.drawer }
+      for (const listener of [...CLIENT_STATE.drawerListeners]) {
         try { listener(snap) } catch { /* ignore */ }
       }
     }
 
     function readSessionLogs(sessionId) {
-      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__'
-      const bucket = NS_STATE.sessionLogs.get(key)
+      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : GLOBAL_SESSION_KEY
+      const bucket = CLIENT_STATE.sessionLogs.get(key)
       return bucket ? { ops: [...bucket.ops], activeId: bucket.activeId } : { ops: [], activeId: null }
     }
 
     function recordSessionOp(sessionId, op) {
-      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__'
-      const prev = NS_STATE.sessionLogs.get(key) ?? { ops: [], activeId: null }
+      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : GLOBAL_SESSION_KEY
+      const prev = CLIENT_STATE.sessionLogs.get(key) ?? { ops: [], activeId: null }
       const filtered = prev.ops.filter(item => item.id !== op.id)
       const ops = [op, ...filtered].slice(0, 10)
-      NS_STATE.sessionLogs.set(key, { ops, activeId: op.id })
+      CLIENT_STATE.sessionLogs.set(key, { ops, activeId: op.id })
       notifyDrawerChanged()
     }
 
     function selectSessionOp(sessionId, opId) {
-      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__'
-      const prev = NS_STATE.sessionLogs.get(key)
+      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : GLOBAL_SESSION_KEY
+      const prev = CLIENT_STATE.sessionLogs.get(key)
       if (!prev) return
-      NS_STATE.sessionLogs.set(key, { ops: prev.ops, activeId: opId })
+      CLIENT_STATE.sessionLogs.set(key, { ops: prev.ops, activeId: opId })
       notifyDrawerChanged()
     }
 
@@ -4423,8 +4423,8 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         setBucket(readSessionLogs(sessionId))
         const onUpdate = () => setBucket(readSessionLogs(sessionId))
-        NS_STATE.drawerListeners.add(onUpdate)
-        return () => { NS_STATE.drawerListeners.delete(onUpdate) }
+        CLIENT_STATE.drawerListeners.add(onUpdate)
+        return () => { CLIENT_STATE.drawerListeners.delete(onUpdate) }
       }, [sessionId])
       return bucket
     }
@@ -4432,11 +4432,11 @@ window.__ModuleLoader__.load({
     function openActionLog(ctx, sessionId, op) {
       recordSessionOp(sessionId, op)
       const sidebarRight = ctx?.get?.('sidebarRight')
-      if (NS_STATE.rightLogTabRegistered && typeof sidebarRight?.openTab === 'function') {
+      if (CLIENT_STATE.rightLogTabRegistered && typeof sidebarRight?.openTab === 'function') {
         try {
           sidebarRight.openTab(LOG_TAB_KIND)
           // Ensure fallback floating drawer stays closed when docked inside the right sidebar
-          if (NS_STATE.drawer.open) closeLogDrawer()
+          if (CLIENT_STATE.drawer.open) closeLogDrawer()
           return
         } catch {
           // fall through to overlay fallback when sidebarRight cannot open for this surface
@@ -4446,34 +4446,34 @@ window.__ModuleLoader__.load({
     }
 
     function openLogDrawer(op) {
-      NS_STATE.drawer = { op, open: true, minimized: false }
+      CLIENT_STATE.drawer = { op, open: true, minimized: false }
       notifyDrawerChanged()
     }
 
     function closeLogDrawer() {
-      NS_STATE.drawer = { ...NS_STATE.drawer, open: false, minimized: false }
+      CLIENT_STATE.drawer = { ...CLIENT_STATE.drawer, open: false, minimized: false }
       notifyDrawerChanged()
     }
 
     function toggleMinimizeLogDrawer() {
-      NS_STATE.drawer = { ...NS_STATE.drawer, minimized: !NS_STATE.drawer.minimized }
+      CLIENT_STATE.drawer = { ...CLIENT_STATE.drawer, minimized: !CLIENT_STATE.drawer.minimized }
       notifyDrawerChanged()
     }
 
     function useLogDrawerState() {
-      const [state, setState] = useState(() => ({ ...NS_STATE.drawer }))
+      const [state, setState] = useState(() => ({ ...CLIENT_STATE.drawer }))
       useEffect(() => {
-        setState({ ...NS_STATE.drawer })
-        NS_STATE.drawerListeners.add(setState)
-        return () => { NS_STATE.drawerListeners.delete(setState) }
+        setState({ ...CLIENT_STATE.drawer })
+        CLIENT_STATE.drawerListeners.add(setState)
+        return () => { CLIENT_STATE.drawerListeners.delete(setState) }
       }, [])
       return state
     }
 
     function openApplyModal(target) {
-      NS_STATE.applyModal = target ? { id: target.id, branch: target.branch ?? null } : null
-      for (const listener of [...NS_STATE.applyModalListeners]) {
-        try { listener(NS_STATE.applyModal) } catch { /* ignore */ }
+      CLIENT_STATE.applyModal = target ? { id: target.id, branch: target.branch ?? null } : null
+      for (const listener of [...CLIENT_STATE.applyModalListeners]) {
+        try { listener(CLIENT_STATE.applyModal) } catch { /* ignore */ }
       }
     }
 
@@ -4482,11 +4482,11 @@ window.__ModuleLoader__.load({
     }
 
     function useApplyModalState() {
-      const [state, setState] = useState(() => NS_STATE.applyModal)
+      const [state, setState] = useState(() => CLIENT_STATE.applyModal)
       useEffect(() => {
-        setState(NS_STATE.applyModal)
-        NS_STATE.applyModalListeners.add(setState)
-        return () => { NS_STATE.applyModalListeners.delete(setState) }
+        setState(CLIENT_STATE.applyModal)
+        CLIENT_STATE.applyModalListeners.add(setState)
+        return () => { CLIENT_STATE.applyModalListeners.delete(setState) }
       }, [])
       return state
     }
@@ -4494,9 +4494,9 @@ window.__ModuleLoader__.load({
     function normalizeLang(tag) {
       if (typeof tag !== 'string' || tag.trim().length === 0) return null
       const lower = tag.trim().toLowerCase()
-      if (NS_STATE.dicts[lower] !== undefined) return lower
+      if (CLIENT_STATE.dicts[lower] !== undefined) return lower
       const primary = lower.split('-')[0]
-      if (NS_STATE.dicts[primary] !== undefined) return primary
+      if (CLIENT_STATE.dicts[primary] !== undefined) return primary
       return null
     }
 
@@ -4519,7 +4519,7 @@ window.__ModuleLoader__.load({
     }
 
     function readLocaleState() {
-      const snap = NS_STATE.ctxLocale?.getSnapshot?.() ?? NS_STATE.ctxLocale?.getLocale?.()
+      const snap = CLIENT_STATE.ctxLocale?.getSnapshot?.() ?? CLIENT_STATE.ctxLocale?.getLocale?.()
       if (snap && typeof snap.active === 'string' && snap.active.length > 0) {
         return { active: snap.active, revision: typeof snap.revision === 'number' ? snap.revision : 0 }
       }
@@ -4532,19 +4532,19 @@ window.__ModuleLoader__.load({
     }
 
     function translateKey(key, params) {
-      if (typeof NS_STATE.boundTranslate === 'function') {
-        const value = NS_STATE.boundTranslate(key, params)
+      if (typeof CLIENT_STATE.boundTranslate === 'function') {
+        const value = CLIENT_STATE.boundTranslate(key, params)
         if (typeof value === 'string' && value !== key) return value
       }
       const lang = normalizeLang(readLocaleState().active) ?? 'en'
-      const dict = NS_STATE.dicts[lang] ?? NS_STATE.dicts.en ?? {}
-      const template = dict[key] ?? NS_STATE.dicts.en?.[key] ?? key
+      const dict = CLIENT_STATE.dicts[lang] ?? CLIENT_STATE.dicts.en ?? {}
+      const template = dict[key] ?? CLIENT_STATE.dicts.en?.[key] ?? key
       return formatTemplate(template, params)
     }
 
     function notifyLocaleListeners() {
       const next = readLocaleState()
-      for (const listener of [...NS_STATE.listeners]) {
+      for (const listener of [...CLIENT_STATE.listeners]) {
         try { listener(next) } catch { /* ignore */ }
       }
     }
@@ -4553,11 +4553,11 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(readLocaleState)
       useEffect(() => {
         setState(readLocaleState())
-        NS_STATE.listeners.add(setState)
+        CLIENT_STATE.listeners.add(setState)
         const onLangChange = () => setState(readLocaleState())
         if (typeof window !== 'undefined') window.addEventListener('languagechange', onLangChange)
         return () => {
-          NS_STATE.listeners.delete(setState)
+          CLIENT_STATE.listeners.delete(setState)
           if (typeof window !== 'undefined') window.removeEventListener('languagechange', onLangChange)
         }
       }, [])
@@ -4571,14 +4571,14 @@ window.__ModuleLoader__.load({
       const dispose = []
       let registered = false
       try {
-        const d = locale.register(NS, NS_STATE.dicts)
+        const d = locale.register(NS, CLIENT_STATE.dicts)
         if (typeof d === 'function') dispose.push(d)
         registered = true
       } catch {
         // fallback for single-locale register(ns, id, dict) signatures
       }
       if (!registered) {
-        for (const [id, dict] of Object.entries(NS_STATE.dicts)) {
+        for (const [id, dict] of Object.entries(CLIENT_STATE.dicts)) {
           try {
             const d = locale.register(NS, id, dict)
             if (typeof d === 'function') dispose.push(d)
@@ -4587,8 +4587,8 @@ window.__ModuleLoader__.load({
           }
         }
       }
-      NS_STATE.ctxLocale = locale
-      NS_STATE.boundTranslate = typeof locale.bind === 'function' ? locale.bind(NS) : null
+      CLIENT_STATE.ctxLocale = locale
+      CLIENT_STATE.boundTranslate = typeof locale.bind === 'function' ? locale.bind(NS) : null
       if (typeof locale.subscribe === 'function') {
         const unsub = locale.subscribe(() => notifyLocaleListeners())
         if (typeof unsub === 'function') dispose.push(unsub)
@@ -4602,9 +4602,9 @@ window.__ModuleLoader__.load({
         for (const d of dispose) {
           try { d() } catch { /* ignore */ }
         }
-        if (NS_STATE.ctxLocale === locale) {
-          NS_STATE.ctxLocale = null
-          NS_STATE.boundTranslate = null
+        if (CLIENT_STATE.ctxLocale === locale) {
+          CLIENT_STATE.ctxLocale = null
+          CLIENT_STATE.boundTranslate = null
         }
       }
     }
@@ -4623,18 +4623,14 @@ window.__ModuleLoader__.load({
       return () => { el.remove() }
     }
 
-    function StyleTag() {
-      return null
-    }
-
     /** ---- plugin entry ---- */
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
-        NS_STATE.ctx = ctx
+        CLIENT_STATE.ctx = ctx
         const disposeStyles = ctx.effect(() => mountStyles(), 'dsh-worktree-env: styles')
         const disposeDictionaries = registerDictionaries(ctx)
-        const disposers = [() => { if (NS_STATE.ctx === ctx) NS_STATE.ctx = null }, disposeStyles, disposeDictionaries]
+        const disposers = [() => { if (CLIENT_STATE.ctx === ctx) CLIENT_STATE.ctx = null }, disposeStyles, disposeDictionaries]
 
         disposers.push(ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: 'dsh-worktree-env', order: 25, locale: NS,
@@ -4677,9 +4673,9 @@ window.__ModuleLoader__.load({
             key: LOG_TAB_ID,
             locale: NS,
           }, ActionLogTabTitle))
-          NS_STATE.rightLogTabRegistered = true
+          CLIENT_STATE.rightLogTabRegistered = true
           return () => {
-            NS_STATE.rightLogTabRegistered = false
+            CLIENT_STATE.rightLogTabRegistered = false
             disposeTitle()
             disposePane()
             disposeTab()

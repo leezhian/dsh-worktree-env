@@ -2,9 +2,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { classifyManagedEnvPath, discoverEnvConfig, listEnvConfigs, parseEnvConfig, parseGitRemoteOwner, writeEnvConfig } from '../src/env-config.js'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { initRepo, makeCtx, run } from './_helpers.js'
 
 const SAMPLE = `version = 1
 name = "Demo"
@@ -70,48 +71,42 @@ test('writeEnvConfig produces parseable TOML', async () => {
   }
 })
 
-test('discoverEnvConfig reads .agents/environments only, ignores .codex, and honors dsh git config overrides', async () => {
+test('discoverEnvConfig reads .agents/environments/*.toml, ignores .codex, and falls back to mainRoot in linked worktrees', async () => {
   const { GitRunner } = await import('../src/git.js')
-  const { execFile } = await import('node:child_process')
-  const { promisify } = await import('node:util')
-  const run = promisify(execFile)
-  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-disc-'))
-  const fakeCtx = {
-    subprocess: {
-      resolveExecutable: async (command) => command,
-      spawn: (spec) => {
-        const child = execFile(spec.argv[0], spec.argv.slice(1), { cwd: spec.cwd, env: { ...process.env, ...spec.env, ...Object.fromEntries(Object.entries(spec.env ?? {}).filter(([, v]) => v !== undefined)) }, signal: spec.signal, maxBuffer: 16 * 1024 * 1024 }, () => {})
-        let stdout = ''
-        let stderr = ''
-        child.stdout?.on('data', chunk => { stdout += chunk })
-        child.stderr?.on('data', chunk => { stderr += chunk })
-        return {
-          stdout: child.stdout,
-          stderr: child.stderr,
-          collected: {},
-          done: new Promise((resolve, reject) => {
-            child.on('error', reject)
-            child.on('close', (code, signal) => resolve({ exitCode: code, signal: signal ?? null }))
-          }),
-          terminate: () => { child.kill('SIGTERM') },
-          waitForExit: async () => true,
-        }
-      },
-    },
-  }
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-disc-')))
   try {
-    await run('git', ['init', '-q', dir])
-    const git = new GitRunner(fakeCtx)
+    await initRepo(dir)
+    const git = new GitRunner(makeCtx())
     const none = await discoverEnvConfig(git, dir)
     assert.equal(none.sourcePath, null)
     // .codex/environments/environment.toml must be ignored (not shared with ChatGPT/Codex)
     await writeEnvConfig(join(dir, '.codex', 'environments', 'environment.toml'), { setupScripts: { top: 'codex setup' } })
     const stillNone = await discoverEnvConfig(git, dir)
     assert.equal(stillNone.sourcePath, null)
+
+    // Non-default .agents/environments/*.toml is discovered when environment.toml is absent
+    await writeEnvConfig(join(dir, '.agents', 'environments', 'environment-2.toml'), { name: 'Secondary', setupScripts: { top: 'secondary setup' } })
+    const secondary = await discoverEnvConfig(git, dir)
+    assert.equal(secondary.source, 'dsh')
+    assert.equal(secondary.name, 'Secondary')
+    assert.equal(secondary.setup.script, 'secondary setup')
+
+    // environment.toml takes priority over environment-2.toml
     await writeEnvConfig(join(dir, '.agents', 'environments', 'environment.toml'), { setupScripts: { top: 'dsh setup' } })
     const dsh = await discoverEnvConfig(git, dir)
     assert.equal(dsh.source, 'dsh')
     assert.equal(dsh.setup.script, 'dsh setup')
+
+    // Relative custom dsh.localEnvironmentConfigPath falls back to mainRoot inside linked worktrees
+    await writeEnvConfig(join(dir, '.agents', 'environments', 'custom.toml'), { name: 'CustomEnv', setupScripts: { top: 'custom setup' } })
+    await run('git', ['-C', dir, 'config', '--local', 'dsh.localEnvironmentConfigPath', '.agents/environments/custom.toml'])
+    const wtPath = join(dir, '.agents', 'worktrees', 'wt-custom')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'wt-custom', wtPath])
+    const fromWt = await discoverEnvConfig(git, wtPath)
+    assert.equal(fromWt.source, 'custom')
+    assert.equal(fromWt.name, 'CustomEnv')
+    assert.equal(fromWt.setup.script, 'custom setup')
+
     await run('git', ['-C', dir, 'config', '--local', 'dsh.localEnvironmentConfigPath', '__none__'])
     const disabled = await discoverEnvConfig(git, dir)
     assert.equal(disabled.disabled, true)

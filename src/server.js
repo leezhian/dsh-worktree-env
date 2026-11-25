@@ -7,6 +7,7 @@
  */
 
 import { inspect } from 'node:util'
+import { PREFERENCES } from './config.js'
 
 /**
  * Register every route on the web server.
@@ -22,12 +23,17 @@ export function registerServer(ctx, service) {
     ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: `${prefix}/operations`, handler: (req, res) => guard(res, () => operationRoute(req, res, service)) }), 'dsh-worktree-env: operation routes'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/environments`, handler: (req, res) => guard(res, () => environmentRoute(req, res, service)) }), 'dsh-worktree-env: environment route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/repo-preferences`, handler: (req, res) => guard(res, () => preferencesRoute(req, res, service)) }), 'dsh-worktree-env: preference route'),
-    ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/quota`, handler: (req, res) => guard(res, async () => json(res, await service.enforceQuota())) }), 'dsh-worktree-env: quota route'),
+    ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/quota`, handler: (req, res) => guard(res, () => quotaRoute(req, res, service)) }), 'dsh-worktree-env: quota route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/config`, handler: (req, res) => guard(res, () => configRoute(req, res, service)) }), 'dsh-worktree-env: config route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/session-actions`, handler: (req, res) => guard(res, () => sessionActionsRoute(req, res, service)) }), 'dsh-worktree-env: session actions route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/actions/run`, handler: (req, res) => guard(res, () => runActionRoute(req, res, service)) }), 'dsh-worktree-env: run action route'),
   ]
   return () => { for (const dispose of disposers) dispose() }
+}
+
+async function quotaRoute(req, res, service) {
+  requireMethod(req, 'POST')
+  json(res, await service.enforceQuota())
 }
 
 async function sessionActionsRoute(req, res, service) {
@@ -168,7 +174,7 @@ async function operationRoute(req, res, service) {
   if (id === undefined || id.length === 0) throw httpError(404, 'operation id required')
   if (tail === 'cancel') {
     requireMethod(req, 'POST')
-    service.runner.cancel(id)
+    service.cancelOperation(id)
     json(res, { cancelled: true })
     return
   }
@@ -176,13 +182,13 @@ async function operationRoute(req, res, service) {
     return await streamOperation(req, res, service, id)
   }
   requireMethod(req, 'GET')
-  const operation = service.runner.get(id)
+  const operation = service.getOperation(id)
   if (operation === undefined) throw httpError(404, 'unknown operation')
   json(res, serializeOperation(operation))
 }
 
 async function streamOperation(req, res, service, id) {
-  const operation = service.runner.get(id)
+  const operation = service.getOperation(id)
   res.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache, no-transform',
@@ -195,28 +201,26 @@ async function streamOperation(req, res, service, id) {
     res.end()
     return
   }
+  // Snapshot carries existing logs; subscribe streams only newly appended entries.
   res.write(`event: snapshot\ndata: ${JSON.stringify(serializeOperation(operation))}\n\n`)
-  for (const entry of operation.logs) {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`)
-  }
   if (operation.status !== 'running') {
     res.write(`event: end\ndata: ${JSON.stringify({ status: operation.status })}\n\n`)
     res.end()
     return
   }
-  const unsubscribe = service.runner.subscribe(id, (entry) => {
+  const unsubscribe = service.subscribeOperation(id, (entry) => {
     res.write(`data: ${JSON.stringify(entry)}\n\n`)
   })
   const interval = setInterval(() => res.write(': ping\n\n'), 15_000)
   const finish = () => {
     clearInterval(interval)
     unsubscribe()
-    const latest = service.runner.get(id)
+    const latest = service.getOperation(id)
     res.write(`event: end\ndata: ${JSON.stringify({ status: latest?.status ?? 'unknown' })}\n\n`)
     res.end()
   }
   const poll = setInterval(() => {
-    const latest = service.runner.get(id)
+    const latest = service.getOperation(id)
     if (latest === undefined || latest.status !== 'running') {
       clearInterval(poll)
       finish()
@@ -257,10 +261,10 @@ async function preferencesRoute(req, res, service) {
   const root = url.searchParams.get('root')
   if (req.method === 'GET') {
     if (root === null) throw httpError(400, 'root query parameter required')
-    const info = await service.git.check(root, ['rev-parse', '--show-toplevel']).catch(() => null)
+    const repositoryRoot = await service.repositoryRootOf(root)
     json(res, {
       root,
-      repositoryRoot: info?.trim() ?? null,
+      repositoryRoot,
       preference: await service.preferenceFor(root),
       default: service.config.defaultCreationPreference,
     })
@@ -268,8 +272,7 @@ async function preferencesRoute(req, res, service) {
   }
   if (req.method === 'PUT') {
     const body = await readBody(req)
-    const allowed = ['ask', 'always', 'never', 'dirty']
-    if (body === null || typeof body.root !== 'string' || (body.preference !== null && !allowed.includes(body.preference))) {
+    if (body === null || typeof body.root !== 'string' || (body.preference !== null && !PREFERENCES.includes(body.preference))) {
       throw httpError(400, 'root and preference (ask | always | never | dirty | null) required')
     }
     const previous = await service.preferenceFor(body.root)

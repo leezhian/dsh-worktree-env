@@ -7,12 +7,16 @@
  */
 
 /** Environment tombstones that clear inherited repository selectors. */
-const GIT_ENV = Object.fromEntries([
-  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
-  'GIT_CEILING_DIRECTORIES', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_GRAFT_FILE',
-  'GIT_REPLACE_REF_BASE', 'GIT_ATTR_SOURCE',
-].map(key => [key, undefined]))
+const GIT_ENV = {
+  ...Object.fromEntries([
+    'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
+    'GIT_CEILING_DIRECTORIES', 'GIT_PREFIX', 'GIT_SHALLOW_FILE', 'GIT_GRAFT_FILE',
+    'GIT_REPLACE_REF_BASE', 'GIT_ATTR_SOURCE',
+  ].map(key => [key, undefined])),
+  LC_MESSAGES: 'C',
+  LANGUAGE: 'C',
+}
 
 const DEFAULT_TIMEOUT_MS = 300_000
 const DEFAULT_GRACE_MS = 3_000
@@ -165,32 +169,6 @@ export class GitRunner {
       throw new GitError(`git ${args[0] ?? ''}`.trim(), { exitCode: result.exitCode, signal: null, stderr: result.stderr })
     }
     return result.stdout
-  }
-
-  /**
-   * Spawn a long-running shell command with live output streaming. The caller
-   * owns reading `handle.stdout`/`handle.stderr` and awaiting `handle.done`.
-   * @param {string} cwd - working directory.
-   * @param {string} script - shell script text.
-   * @param {{ env?: Record<string, string | undefined>, signal?: AbortSignal, timeoutMs?: number }} [options]
-   * @returns {Promise<import('@deepseek-ai/dsh-subprocess').SubprocessHandle>} the live handle.
-   */
-  async spawnShell(cwd, script, options = {}) {
-    const signal = options.signal
-    const timeout = options.timeoutMs === undefined || options.timeoutMs <= 0
-      ? signal ?? new AbortController().signal
-      : AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(options.timeoutMs)])
-    const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
-    const shellArgs = process.platform === 'win32' ? ['/d', '/s', '/c', script] : ['-c', script]
-    const program = await this.ctx.subprocess.resolveExecutable(shell, undefined, timeout)
-    return this.ctx.subprocess.spawn({
-      argv: [program, ...shellArgs],
-      cwd,
-      env: { ...(options.env ?? {}) },
-      graceMs: this.graceMs,
-      signal: timeout,
-      stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' },
-    })
   }
 }
 

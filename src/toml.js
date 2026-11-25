@@ -163,7 +163,7 @@ function formatValue(value) {
     if (value.includes('\n')) return `"""\n${value.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"')}"""`
     return `"${escapeBasic(value)}"`
   }
-  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(value)
+  if (typeof value === 'number') return String(value)
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   if (value === null || value === undefined) return "''"
   if (Array.isArray(value)) return `[${value.map(item => formatValue(item)).join(', ')}]`

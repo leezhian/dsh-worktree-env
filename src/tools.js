@@ -78,6 +78,7 @@ function handoffTool(service) {
         carryChanges: args.carryChanges,
         fetch: args.fetch,
       }, exec.signal)
+      const conflicts = result.conflicts ?? []
       return {
         tool: 'worktree_handoff',
         path: result.created.path,
@@ -85,8 +86,9 @@ function handoffTool(service) {
         baseCommit: result.created.baseCommit,
         repositoryRoot: result.created.repositoryRoot,
         carriedFiles: result.carriedFiles,
-        setup: (result.record.setupState),
-        message: `Session now works in worktree ${result.created.branch} at ${result.created.path}${result.carriedFiles > 0 ? `; carried ${result.carriedFiles} changed file(s)` : ''}. Setup state: ${result.record.setupState}.`,
+        conflicts,
+        setup: result.record.setupState,
+        message: `Session now works in worktree ${result.created.branch} at ${result.created.path}${result.carriedFiles > 0 ? `; carried ${result.carriedFiles} changed file(s)` : ''}${conflicts.length > 0 ? ` (conflicts: ${conflicts.join('; ')})` : ''}. Setup state: ${result.record.setupState}.`,
       }
     },
   })

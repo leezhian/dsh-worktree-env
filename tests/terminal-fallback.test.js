@@ -10,12 +10,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import vm from 'node:vm'
-
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+import { loadClientModule } from './_helpers.js'
 
 function findNodes(node, predicate, out = []) {
   if (!node || typeof node !== 'object') return out
@@ -34,68 +29,10 @@ async function loadHeaderHarness({
   actions = [{ name: 'dev', icon: 'run', command: 'npm run dev' }],
   envFile = null,
 } = {}) {
-  const source = await readFile(join(ROOT, 'client.js'), 'utf8')
-  const stateSlots = []
-  const effectSlots = []
-  const refSlots = []
-  let cursor = 0
-  let effectCursor = 0
-  let refCursor = 0
-  let loadedModule = null
-
-  const mockReact = {
-    Fragment: Symbol('Fragment'),
-    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useState: (init) => {
-      const idx = cursor++
-      if (!(idx in stateSlots)) stateSlots[idx] = typeof init === 'function' ? init() : init
-      const setter = (next) => {
-        stateSlots[idx] = typeof next === 'function' ? next(stateSlots[idx]) : next
-      }
-      return [stateSlots[idx], setter]
-    },
-    useEffect: (fn, deps) => {
-      const idx = effectCursor++
-      const prev = effectSlots[idx]
-      const changed = !prev || !deps || !prev.deps || deps.length !== prev.deps.length || deps.some((d, i) => d !== prev.deps[i])
-      if (changed) {
-        if (typeof prev?.cleanup === 'function') prev.cleanup()
-        const cleanup = fn()
-        effectSlots[idx] = { deps, cleanup }
-      }
-    },
-    useMemo: (fn) => fn(),
-    useRef: (init) => {
-      const idx = refCursor++
-      if (!(idx in refSlots)) {
-        refSlots[idx] = {
-          current: init ?? {
-            getBoundingClientRect: () => ({ top: 10, bottom: 38, right: 600, left: 500 }),
-            contains: () => false,
-          },
-        }
-      }
-      return refSlots[idx]
-    },
-    useCallback: (fn) => fn,
-  }
-
   const fetchCalls = []
-  const sandbox = {
-    window: {
-      innerWidth: 1200,
-      __ModuleLoader__: {
-        load(spec) {
-          loadedModule = spec.factory((id) => {
-            if (id === 'react') return mockReact
-            throw new Error(`unexpected require: ${id}`)
-          })
-        },
-      },
-      addEventListener() {},
-      removeEventListener() {},
-    },
-    fetch: async (url, init) => {
+  const { loadedModule, renderAt } = await loadClientModule({
+    defaultRectRef: true,
+    fetchImpl: async (url, init) => {
       fetchCalls.push({ url, init })
       if (url.includes('/actions/run')) {
         return { ok: true, status: 200, text: async () => JSON.stringify({ operationId: 'op-fallback-1' }) }
@@ -116,18 +53,7 @@ async function loadHeaderHarness({
       }
       return { ok: true, status: 200, text: async () => JSON.stringify({}) }
     },
-    navigator: { language: 'zh-CN', languages: ['zh-CN'] },
-    document: {
-      documentElement: { lang: 'zh-CN' },
-      addEventListener() {},
-      removeEventListener() {},
-    },
-    console,
-    setTimeout,
-    clearTimeout,
-    encodeURIComponent,
-  }
-  vm.runInNewContext(source, sandbox, { filename: 'client.js' })
+  })
 
   const registeredSlots = []
   const openedTabs = []
@@ -259,12 +185,7 @@ async function loadHeaderHarness({
   const headerSlot = registeredSlots.find(s => s.meta.name === 'conversation.session.header.utilities')
   const overlaySlot = registeredSlots.find(s => s.meta.name === 'shell.overlay')
 
-  const renderHeader = () => {
-    cursor = 0
-    effectCursor = 0
-    refCursor = 0
-    return headerSlot.component({ sessionId: 'sess-1', cwd: '/repo' })
-  }
+  const renderHeader = () => renderAt(0, () => headerSlot.component({ sessionId: 'sess-1', cwd: '/repo' }))
 
   // Initial render triggers useEffect -> /session-actions fetch; await flush and re-render
   renderHeader()
@@ -297,12 +218,7 @@ async function loadHeaderHarness({
     },
     setSidebarExpanded: (val) => { expanded = val },
     getToggleExpandCount: () => toggleExpandCount,
-    renderOverlay: () => {
-      cursor = 100
-      effectCursor = 100
-      refCursor = 100
-      return overlaySlot.component()
-    },
+    renderOverlay: () => renderAt(100, () => overlaySlot.component()),
     fetchCalls,
     openedTabs,
     focusedTabs,
@@ -430,60 +346,10 @@ test('Tier 3: falls back to floating shell.overlay LogDrawer when both terminal 
 })
 
 test('Reopened archived worktree session auto-shows Restore button in top bar and removes Archive button from session menu', async () => {
-  const source = await readFile(join(ROOT, 'client.js'), 'utf8')
-  const stateSlots = []
-  const effectSlots = []
-  const refSlots = []
-  let cursor = 0
-  let effectCursor = 0
-  let refCursor = 0
-  let loadedModule = null
-
-  const mockReact = {
-    Fragment: Symbol('Fragment'),
-    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useState: (init) => {
-      const idx = cursor++
-      if (!(idx in stateSlots)) stateSlots[idx] = typeof init === 'function' ? init() : init
-      const setter = (next) => {
-        stateSlots[idx] = typeof next === 'function' ? next(stateSlots[idx]) : next
-      }
-      return [stateSlots[idx], setter]
-    },
-    useEffect: (fn, deps) => {
-      const idx = effectCursor++
-      const prev = effectSlots[idx]
-      const changed = !prev || !deps || !prev.deps || deps.length !== prev.deps.length || deps.some((d, i) => d !== prev.deps[i])
-      if (changed) {
-        if (typeof prev?.cleanup === 'function') prev.cleanup()
-        effectSlots[idx] = { deps, cleanup: fn() }
-      }
-    },
-    useMemo: (fn) => fn(),
-    useRef: (init) => {
-      const idx = refCursor++
-      if (!(idx in refSlots)) refSlots[idx] = { current: init }
-      return refSlots[idx]
-    },
-    useCallback: (fn) => fn,
-  }
-
   let restored = false
   const fetchCalls = []
-  const sandbox = {
-    window: {
-      __ModuleLoader__: {
-        load(spec) {
-          loadedModule = spec.factory((id) => {
-            if (id === 'react') return mockReact
-            throw new Error(`unexpected require: ${id}`)
-          })
-        },
-      },
-      addEventListener() {},
-      removeEventListener() {},
-    },
-    fetch: async (url, init) => {
+  const { loadedModule, renderAt } = await loadClientModule({
+    fetchImpl: async (url, init) => {
       fetchCalls.push({ url, init })
       if (url.includes('/restore')) {
         restored = true
@@ -516,14 +382,7 @@ test('Reopened archived worktree session auto-shows Restore button in top bar an
       }
       return { ok: true, status: 200, text: async () => JSON.stringify({}) }
     },
-    navigator: { language: 'zh-CN', languages: ['zh-CN'] },
-    document: { documentElement: { lang: 'zh-CN' }, addEventListener() {}, removeEventListener() {} },
-    console,
-    setTimeout,
-    clearTimeout,
-    encodeURIComponent,
-  }
-  vm.runInNewContext(source, sandbox, { filename: 'client.js' })
+  })
 
   const registeredSlots = []
   const localeService = {
@@ -547,20 +406,14 @@ test('Reopened archived worktree session auto-shows Restore button in top bar an
   const headerSlot = registeredSlots.find(s => s.meta.name === 'conversation.session.header.utilities')
   const menuSlot = registeredSlots.find(s => s.meta.name === 'sidebar.workspaces.session.menu.item')
 
-  const renderHeader = () => {
-    cursor = 0; effectCursor = 0; refCursor = 0
-    return headerSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' })
-  }
+  const renderHeader = () => renderAt(0, () => headerSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' }))
   renderHeader()
   await new Promise(r => setTimeout(r, 10))
   const archivedTree = renderHeader()
   const restoreBtns = findNodes(archivedTree, n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-hdr-restore'))
   assert.equal(restoreBtns.length, 1, 'archived worktree session should auto-show Restore button in top bar')
 
-  const renderMenu = () => {
-    cursor = 50; effectCursor = 50; refCursor = 50
-    return menuSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' })
-  }
+  const renderMenu = () => renderAt(50, () => menuSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' }))
 
   // Before restoring: session menu shows Restore worktree (no Archive button)
   renderMenu()
@@ -586,10 +439,20 @@ test('Reopened archived worktree session auto-shows Restore button in top bar an
 
   // Clicking Apply opens the native ApplyBackflowModal in shell.overlay (branch selection modal)
   const overlaySlot = registeredSlots.find(s => s.meta.name === 'shell.overlay')
-  cursor = 100; effectCursor = 100; refCursor = 100
-  assert.equal(overlaySlot.component(), null)
+  assert.equal(renderAt(100, () => overlaySlot.component()), null)
   activeMenuButtons[0].props.onClick()
-  cursor = 100; effectCursor = 100; refCursor = 100
-  const overlayTree = overlaySlot.component()
+  const overlayTree = renderAt(100, () => overlaySlot.component())
   assert.ok(overlayTree !== null, 'clicking Apply changes should open ApplyBackflowModal in shell.overlay')
+})
+
+test('Tier 1: injects DSH_* variables only (no CODEX_* leakage) when command references DSH_WORKTREE_PATH', async () => {
+  const harness = await loadHeaderHarness({
+    withTerminal: true,
+    withSidebarRight: true,
+    actions: [{ name: 'inspect', icon: 'tool', command: 'echo "$DSH_WORKTREE_PATH"' }],
+  })
+  await harness.triggerPrimary()
+  assert.equal(harness.terminalWrites.length, 1)
+  assert.match(harness.terminalWrites[0], /DSH_WORKTREE_PATH='\/repo'/)
+  assert.doesNotMatch(harness.terminalWrites[0], /CODEX_/)
 })

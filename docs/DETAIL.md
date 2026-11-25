@@ -23,12 +23,19 @@ to direct Git commands if the experimental worktree service is disabled.
 - **Patch backflow** — computes the worktree's changes (committed plus
   uncommitted, or uncommitted only) and merges them back onto the source
   checkout with `git apply --3way`, with a dry-run precheck that reports
-  conflicts before writing.
-- **Snapshot archiving** — before a worktree with uncommitted changes is
-  archived or quota-cleaned, writes a hidden snapshot ref
+  conflicts before writing. In the Web UI modal, you can target the source
+  checkout's current branch, switch to another local branch (with zero-side-effect
+  ref precheck and dirty-source protection), or create a new local branch.
+- **Snapshot archiving & auto-restore** — before a worktree with uncommitted
+  changes is archived, quota-cleaned, or cleaned up on session archival (when
+  `autoCleanupEnabled` and `snapshotOnArchive` are enabled; cancelled if the
+  session is unarchived), writes a hidden snapshot ref
   (`refs/dsh-worktree-env/snapshots/…`) so the checkout can be removed while
-  keeping uncommitted work losslessly recoverable. Directories containing
-  initialized submodules or nested repositories are never auto-destroyed.
+  keeping uncommitted work losslessly recoverable. Reopening an archived
+  worktree session auto-surfaces a one-click **Restore worktree** button (and
+  removes the consumed snapshot ref once losslessly restored). Directories
+  containing initialized submodules or nested repositories are never
+  auto-destroyed.
 - **Quota cleanup** — keeps at most `keepCount` (default `15`) active worktrees
   per repository, oldest-accessed first, while protecting worktrees used by
   pinned sessions, active sessions, or running setup/action processes.
@@ -39,12 +46,15 @@ to direct Git commands if the experimental worktree service is disabled.
   `worktree_apply_patch`, `worktree_archive`, `worktree_restore`.
 - **Web UI** — a sidebar **Worktrees** panel with **Settings** (relative
   worktree directory synced with `@deepseek-ai/dsh-experimental-worktree`, fetch
-  toggle, `keepCount`, delete confirmation, and a collapsible DSH-only managed
-  worktrees list) and **Environments** (project list, read-only preview with
+  toggle, automatic cleanup toggle, `keepCount`, delete confirmation, a
+  collapsible DSH-only managed worktrees list with manual **Run setup** live
+  logs, and a collapsible **Archived worktrees** list for one-click restore or
+  permanent purge) and **Environments** (project list, read-only preview with
   available variables, and visual `.toml` editor), plus **conversation top-bar
-  quick actions** (preferring DSH's native interactive terminal when enabled,
-  falling back to an on-demand right-sidebar log tab or floating drawer) and
-  session menu items. All UI copy follows DSH's active language in real time.
+  quick actions / restore button** (preferring DSH's native interactive terminal
+  when enabled, falling back to an on-demand right-sidebar log tab or floating
+  drawer) and session menu items (**Handoff**, **Apply changes** modal, or
+  **Restore worktree**). All UI copy follows DSH's active language in real time.
 
 ## Configuration
 
@@ -68,4 +78,5 @@ that repository.
 - Backflow applies patches against the source checkout's working tree; conflicts
   abort cleanly and are never silently overwritten.
 - Snapshot refs live in the repository's object store; `git gc` retains them
-  while the refs exist.
+  while the refs exist (and successful lossless restore cleans up the consumed
+  snapshot ref).

@@ -8,65 +8,21 @@
  * @module
  */
 
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import {
+  DEFAULT_WORKTREE_DIRECTORY,
+  PREFERENCES,
+  isValidRelativeWorktreeDir,
+  normalizeConfig,
+  persistedConfigPath,
+  readPersistedConfig,
+} from './config.js'
 import { WorktreeEnhanceService } from './service.js'
 import { registerPromptContext, registerShellEnv } from './prompt.js'
 import { registerServer } from './server.js'
 import { registerWorktreeTools } from './tools.js'
 
 export const name = 'dsh-worktree-env'
-
-const PREFERENCES = ['ask', 'always', 'never', 'dirty']
-const DEFAULTS = {
-  worktreeDirectory: '',
-  autoRunSetup: true,
-  autoRunCleanup: true,
-  setupTimeoutMs: 300000,
-  upstreamRefreshMode: 'never',
-  defaultCreationPreference: 'ask',
-  repositoryPreferences: [],
-  snapshotOnArchive: true,
-  autoCleanupEnabled: true,
-  keepCount: 15,
-  confirmBeforeDelete: true,
-}
-
-export const DEFAULT_WORKTREE_DIRECTORY = '.agents/worktrees'
-
-/**
- * Matches `@deepseek-ai/dsh-experimental-worktree`'s strict relative-path rule:
- * non-empty relative path inside the repository root without `.`, `..`, `\`, `:`,
- * or leading/consecutive slashes.
- * @param {string} value
- * @returns {boolean}
- */
-export function isValidRelativeWorktreeDir(value) {
-  return typeof value === 'string'
-    && value.length > 0
-    && !value.includes('\\')
-    && !value.includes(':')
-    && value.split('/').every(part => part.length > 0 && part !== '.' && part !== '..')
-}
-
-/** Path where UI-edited plugin settings are persisted across restarts. */
-export function persistedConfigPath() {
-  const dshHome = typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.trim().length > 0
-    ? process.env.DSH_HOME.trim()
-    : join(homedir(), '.dsh')
-  return join(dshHome, 'plugins', 'dsh-worktree-env', 'config.json')
-}
-
-function readPersistedConfig() {
-  try {
-    const raw = readFileSync(persistedConfigPath(), 'utf8')
-    const parsed = JSON.parse(raw)
-    return parsed !== null && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
+export { DEFAULT_WORKTREE_DIRECTORY, isValidRelativeWorktreeDir, normalizeConfig, persistedConfigPath }
 
 /**
  * Optional Schemastery Config schema so DSH Settings auto-generates the plugin
@@ -104,38 +60,6 @@ async function buildConfigSchema() {
 
 export const Config = await buildConfigSchema()
 
-/**
- * Normalize a raw row config against the documented defaults.
- * @param {Record<string, unknown> | undefined} raw
- */
-export function normalizeConfig(raw) {
-  const input = raw !== null && typeof raw === 'object' ? raw : {}
-  const positiveInt = (value, fallback, min) => {
-    const parsed = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : Number.NaN
-    return Number.isFinite(parsed) && parsed >= min ? parsed : fallback
-  }
-  const rawDir = typeof input.worktreeDirectory === 'string'
-    ? input.worktreeDirectory.trim().replace(/\/+$/, '')
-    : ''
-  return {
-    worktreeDirectory: rawDir.length > 0 && isValidRelativeWorktreeDir(rawDir) ? rawDir : DEFAULTS.worktreeDirectory,
-    autoRunSetup: input.autoRunSetup !== false,
-    autoRunCleanup: input.autoRunCleanup !== false,
-    setupTimeoutMs: positiveInt(input.setupTimeoutMs, DEFAULTS.setupTimeoutMs, 1000),
-    upstreamRefreshMode: input.upstreamRefreshMode === 'best-effort' ? 'best-effort' : 'never',
-    defaultCreationPreference: PREFERENCES.includes(input.defaultCreationPreference) ? input.defaultCreationPreference : 'ask',
-    repositoryPreferences: Array.isArray(input.repositoryPreferences)
-      ? input.repositoryPreferences.filter(entry => entry !== null && typeof entry === 'object'
-        && typeof entry.commonDir === 'string' && typeof entry.root === 'string'
-        && PREFERENCES.includes(entry.preference))
-      : [],
-    snapshotOnArchive: input.snapshotOnArchive !== false,
-    autoCleanupEnabled: input.autoCleanupEnabled !== false,
-    keepCount: positiveInt(input.keepCount, DEFAULTS.keepCount, 1),
-    confirmBeforeDelete: input.confirmBeforeDelete !== false,
-  }
-}
-
 export const inject = ['subprocess', 'workingDirectory', 'tools', 'systemPrompt', 'webServer', 'commands', 'timer']
 
 /**
@@ -153,34 +77,27 @@ export function apply(ctx, rawConfig) {
     void service.observeSessionEvent(session, event)
   }), 'dsh-worktree-env: creation adoption')
 
+  // Keep worktree `lastAccessedAt` and prompt dirty/policy cache fresh on directory changes.
+  ctx.effect(() => ctx.on('working-directory/change', (payload) => {
+    const cwd = typeof payload === 'string' ? payload : (payload?.path ?? payload?.cwd ?? payload?.next)
+    const sessionId = typeof payload === 'object' && payload !== null
+      ? (payload.sessionId ?? payload.session?.header?.id ?? payload.agent?.session?.header?.id ?? null)
+      : null
+    if (typeof cwd === 'string' && cwd.length > 0) {
+      void service.touchWorktreeAccess(cwd, sessionId)
+      void service.refreshPreference(cwd).catch(() => {})
+    }
+  }), 'dsh-worktree-env: working directory tracking')
+
   // Protect setup/action runs from session archival, and stop only operations
   // belonging to worktrees owned by the stopped session.
   ctx.effect(() => ctx.on('workspace/session-activity', async (request, next) => {
     const inherited = await next()
-    const index = service.sessionIndex()
-    const own = []
-    for (const [path, entries] of index) {
-      if (entries.some(entry => entry.sessionId === request.sessionId) && service.busyPaths.has(path)) {
-        own.push({ kind: `dsh-worktree-env setup/action (${path})`, startedAt: Date.now() })
-      }
-    }
+    const own = service.sessionActivity(request.sessionId)
     return own.length > 0 ? [...inherited, ...own] : inherited
   }), 'dsh-worktree-env: session activity')
   ctx.effect(() => ctx.on('workspace/session-stop', async (request) => {
-    const index = service.sessionIndex()
-    const ownedPaths = new Set()
-    for (const [path, entries] of index) {
-      if (entries.some(entry => entry.sessionId === request.sessionId)) {
-        ownedPaths.add(path)
-      }
-    }
-    if (ownedPaths.size === 0) return
-    for (const [id, operation] of service.runner.operations) {
-      if (operation.status !== 'running') continue
-      if (operation.worktreePath !== null && ownedPaths.has(operation.worktreePath)) {
-        service.runner.cancel(id)
-      }
-    }
+    service.cancelOperationsForSession(request.sessionId)
   }), 'dsh-worktree-env: session stop')
 
   // Startup + periodic quota enforcement (matching Codex App startup & background cleanup).

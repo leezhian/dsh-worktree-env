@@ -5,50 +5,13 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { mkdtemp, mkdir, readFile, rm, writeFile, access, constants } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { initRepo as initBaseRepo, makeCtx, run } from './_helpers.js'
 
-const run = promisify(execFile)
-
-/** Minimal subprocess provider backed by child_process, as the Host provides. */
-function fakeCtx() {
-  return {
-    subprocess: {
-      resolveExecutable: async (command) => command,
-      spawn: (spec) => {
-        const env = { ...process.env }
-        for (const [key, value] of Object.entries(spec.env ?? {})) {
-          if (value === undefined) delete env[key]
-          else env[key] = value
-        }
-        const child = execFile(spec.argv[0], spec.argv.slice(1), { cwd: spec.cwd, env, signal: spec.signal, maxBuffer: 64 * 1024 * 1024 }, () => {})
-        return {
-          stdout: child.stdout,
-          stderr: child.stderr,
-          collected: {},
-          done: new Promise((resolve, reject) => {
-            child.on('error', reject)
-            child.on('close', (code, signal) => resolve({ exitCode: code, signal: signal ?? null }))
-          }),
-          terminate: () => { if (child.exitCode === null) child.kill('SIGTERM') },
-          waitForExit: async () => true,
-        }
-      },
-    },
-  }
-}
-
-async function initRepo(dir) {
-  await run('git', ['init', '-q', '-b', 'main', dir])
-  await run('git', ['-C', dir, 'config', 'user.email', 'test@example.com'])
-  await run('git', ['-C', dir, 'config', 'user.name', 'Test'])
-  await writeFile(join(dir, 'committed.txt'), 'base\n', 'utf8')
-  await run('git', ['-C', dir, 'add', '-A'])
-  await run('git', ['-C', dir, 'commit', '-q', '-m', 'base'])
-}
+const fakeCtx = makeCtx
+const initRepo = (dir) => initBaseRepo(dir, 'committed.txt', 'base\n')
 
 test('packageWorkingTree captures modified and untracked files without touching the index', async () => {
   const { GitRunner } = await import('../src/git.js')
@@ -205,6 +168,139 @@ test('backflowPatch deduplicates tracked+uncommitted edits and applies cleanly i
     assert.equal(await readFile(join(headTarget, 'committed.txt'), 'utf8'), 'committed + uncommitted\n')
     assert.equal(await readFile(join(headTarget, 'uncommitted.txt'), 'utf8'), 'later\n')
   } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('precheckPatches and precheckPatchesOnRef accurately detect 3-way conflicts and clean cross-branch tracked edits', async () => {
+  const { GitRunner } = await import('../src/git.js')
+  const { backflowPatch, precheckPatches, precheckPatchesOnRef } = await import('../src/transfer.js')
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-3way-'))
+  try {
+    await initRepo(dir)
+    await writeFile(join(dir, 'committed.txt'), 'line1\nline2\nline3\nline4\nline5\n', 'utf8')
+    await run('git', ['-C', dir, 'commit', '-aq', '-m', 'multiline'])
+    const base = (await run('git', ['-C', dir, 'rev-parse', 'HEAD'])).stdout.trim()
+
+    // Branch `clean-other` edits line 5 (non-overlapping with worktree's line 2 edit)
+    await run('git', ['-C', dir, 'checkout', '-q', '-b', 'clean-other'])
+    await writeFile(join(dir, 'committed.txt'), 'line1\nline2\nline3\nline4\nother5\n', 'utf8')
+    await run('git', ['-C', dir, 'commit', '-aq', '-m', 'clean-other'])
+
+    // Branch `main` edits line 2 (overlapping conflict with worktree's line 2 edit)
+    await run('git', ['-C', dir, 'checkout', '-q', 'main'])
+    await writeFile(join(dir, 'committed.txt'), 'line1\nmain2\nline3\nline4\nline5\n', 'utf8')
+    await run('git', ['-C', dir, 'commit', '-aq', '-m', 'main-conflict'])
+
+    const worktree = join(dir, '.agents', 'worktrees', 'feat-edit')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-edit', worktree, base])
+    await writeFile(join(worktree, 'committed.txt'), 'line1\nfeat2\nline3\nline4\nline5\n', 'utf8')
+    await run('git', ['-C', worktree, 'commit', '-aq', '-m', 'feat-edit'])
+
+    const git = new GitRunner(fakeCtx())
+    const commonDir = (await run('git', ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim()
+    const { patches, files } = await backflowPatch(git, { path: worktree, baseCommit: base }, 'branch')
+
+    // 1. Conflicting 3-way merge on current checkout MUST fail precheck (even though git apply --check --3way exits 0)
+    const conflictCheck = await precheckPatches(git, dir, patches)
+    assert.equal(conflictCheck.ok, false)
+    assert.ok(conflictCheck.conflicts.some(c => c.includes('committed.txt')))
+    assert.equal(await readFile(join(dir, 'committed.txt'), 'utf8'), 'line1\nmain2\nline3\nline4\nline5\n', 'precheck must not write conflict markers')
+
+    // 2. Clean 3-way merge on another branch (`clean-other`) MUST succeed (stat cache refreshed after checkout-index)
+    const refClean = await precheckPatchesOnRef(git, commonDir, 'refs/heads/clean-other', patches, files)
+    assert.equal(refClean.ok, true, `expected clean ref precheck, got conflicts: ${refClean.conflicts.join('; ')}`)
+
+    // 3. Conflicting 3-way merge on `main` via precheckPatchesOnRef MUST report conflict
+    const refConflict = await precheckPatchesOnRef(git, commonDir, 'refs/heads/main', patches, files)
+    assert.equal(refConflict.ok, false)
+    assert.ok(refConflict.conflicts.some(c => c.includes('committed.txt')))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('packageWorkingTree excludes .agents/worktrees even without .gitignore', async () => {
+  const { GitRunner } = await import('../src/git.js')
+  const { packageWorkingTree } = await import('../src/transfer.js')
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-excl-'))
+  try {
+    await initRepo(dir)
+    const wtPath = join(dir, '.agents', 'worktrees', 'existing-wt')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'existing-wt', wtPath])
+    await writeFile(join(dir, 'real-edit.txt'), 'hello\n', 'utf8')
+
+    const git = new GitRunner(fakeCtx())
+    const packaged = await packageWorkingTree(git, dir)
+    assert.equal(packaged.fileCount, 1)
+    assert.deepEqual(packaged.files, ['real-edit.txt'])
+    assert.doesNotMatch(packaged.patch ?? '', /\.agents\/worktrees/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('nestedRepositoryFindings ignores uninitialized submodules while blocking initialized ones', async () => {
+  const { GitRunner } = await import('../src/git.js')
+  const { nestedRepositoryFindings } = await import('../src/snapshot.js')
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-submod-'))
+  try {
+    const subRepo = join(dir, 'sub-origin')
+    await initRepo(subRepo)
+    const mainRepo = join(dir, 'main-repo')
+    await initRepo(mainRepo)
+    await run('git', ['-C', mainRepo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subRepo, 'libs/sub'])
+    await run('git', ['-C', mainRepo, 'commit', '-aq', '-m', 'add sub'])
+
+    // A fresh linked worktree has the submodule UNINITIALIZED (`-` prefix in `git submodule status`)
+    const wtPath = join(dir, 'wt-uninit')
+    await run('git', ['-C', mainRepo, 'worktree', 'add', '-q', '-b', 'wt-uninit', wtPath])
+
+    const git = new GitRunner(fakeCtx())
+    const uninitFindings = await nestedRepositoryFindings(git, wtPath)
+    assert.deepEqual(uninitFindings, [], 'uninitialized submodule should not block archive')
+
+    // Once initialized inside the worktree, it MUST block archive
+    await run('git', ['-C', wtPath, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q'])
+    const initFindings = await nestedRepositoryFindings(git, wtPath)
+    assert.ok(initFindings.length > 0, 'initialized submodule must block archive')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('RepoStore.writeEnv exports variables for POSIX child processes and EnvRunner scrubs host API keys', async () => {
+  const { RepoStore } = await import('../src/store.js')
+  const { EnvRunner } = await import('../src/env-runner.js')
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-envexp-'))
+  const prevKey = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'sk-host-secret-must-not-leak'
+  try {
+    const store = new RepoStore(dir)
+    await store.writeEnv('feat', { CUSTOM_VAR: 'propagated-value' })
+    const raw = await readFile(store.envFile('feat'), 'utf8')
+    assert.match(raw, /^export CUSTOM_VAR='propagated-value'$/m)
+
+    // Sourcing the file in /bin/sh propagates CUSTOM_VAR into a child process
+    const res = await run('/bin/sh', ['-c', `. '${store.envFile('feat')}' && /bin/sh -c 'printf "%s" "$CUSTOM_VAR"'`])
+    assert.equal(res.stdout, 'propagated-value')
+
+    // EnvRunner scrubs DEEPSEEK_API_KEY from child scripts
+    const runner = new EnvRunner()
+    const op = runner.begin('action', 'scrub-check', dir)
+    const outcome = await runner.runScript({
+      ctx: fakeCtx(),
+      operation: op,
+      cwd: dir,
+      script: 'printf "LEAK=%s\\n" "$DEEPSEEK_API_KEY"',
+    })
+    assert.equal(outcome.status, 'succeeded')
+    const outText = op.logs.map(l => l.text).join('')
+    assert.match(outText, /LEAK=\n/)
+    assert.doesNotMatch(outText, /sk-host-secret/)
+  } finally {
+    if (prevKey === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = prevKey
     await rm(dir, { recursive: true, force: true })
   }
 })

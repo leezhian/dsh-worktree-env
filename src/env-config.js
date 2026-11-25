@@ -47,6 +47,43 @@ async function gitConfig(git, root, key, signal) {
   return value.length === 0 ? null : value
 }
 
+async function findFirstEnvFileInRoot(root) {
+  for (const dir of ENV_DIRS) {
+    const folder = join(root, dir.rel)
+    let entries
+    try {
+      entries = await readdir(folder, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    const files = entries
+      .filter(e => e.isFile() && e.name.toLowerCase().endsWith('.toml'))
+      .map(e => e.name)
+      .sort((a, b) => {
+        if (a === 'environment.toml') return -1
+        if (b === 'environment.toml') return 1
+        return a.localeCompare(b)
+      })
+    for (const file of files) {
+      const path = join(folder, file)
+      try {
+        await readFile(path, 'utf8')
+        return { path, source: dir.source }
+      } catch {
+        // try the next candidate
+      }
+    }
+  }
+  return null
+}
+
+async function resolveMainRepoRoot(git, root, signal) {
+  const commonDir = await git.run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], { allowedExitCodes: [0, 128], signal })
+  if (commonDir.exitCode !== 0) return null
+  const trimmed = commonDir.stdout.trim()
+  return trimmed.endsWith('/.git') ? trimmed.slice(0, -'/.git'.length) : null
+}
+
 /**
  * Discover and parse the environment config for one checkout.
  * @param {import('./git.js').GitRunner} git - runner.
@@ -62,37 +99,37 @@ export async function discoverEnvConfig(git, root, signal) {
   /** @type {{ path: string, source: 'dsh' | 'custom' } | null} */
   let found = null
   if (custom !== null) {
-    found = { path: isAbsolute(custom) ? custom : join(root, custom), source: 'custom' }
-  } else {
-    for (const relPath of DEFAULT_RELATIVE_PATHS) {
-      const path = join(root, relPath)
-      try {
-        await readFile(path, 'utf8')
-        found = { path, source: 'dsh' }
-        break
-      } catch {
-        // try the next candidate
+    const direct = isAbsolute(custom) ? custom : join(root, custom)
+    try {
+      await readFile(direct, 'utf8')
+      found = { path: direct, source: 'custom' }
+    } catch {
+      if (!isAbsolute(custom)) {
+        const mainRoot = await resolveMainRepoRoot(git, root, signal)
+        if (mainRoot !== null && mainRoot !== root) {
+          const fallback = join(mainRoot, custom)
+          try {
+            await readFile(fallback, 'utf8')
+            found = { path: fallback, source: 'custom' }
+          } catch {
+            found = { path: direct, source: 'custom' }
+          }
+        } else {
+          found = { path: direct, source: 'custom' }
+        }
+      } else {
+        found = { path: direct, source: 'custom' }
       }
     }
-  }
-  if (found === null) {
-    // A linked worktree is a fresh checkout: untracked local files such as
-    // environment.toml exist only in the source checkout, so fall back to the
-    // repository's main root (the parent of the git common dir).
-    const commonDir = await git.run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], { allowedExitCodes: [0, 128], signal })
-    const mainRoot = commonDir.exitCode === 0 && commonDir.stdout.trim().endsWith('/.git')
-      ? commonDir.stdout.trim().slice(0, -'/.git'.length)
-      : null
-    if (mainRoot !== null && mainRoot !== root) {
-      for (const relPath of DEFAULT_RELATIVE_PATHS) {
-        const path = join(mainRoot, relPath)
-        try {
-          await readFile(path, 'utf8')
-          found = { path, source: 'dsh' }
-          break
-        } catch {
-          // try the next candidate
-        }
+  } else {
+    found = await findFirstEnvFileInRoot(root)
+    if (found === null) {
+      // A linked worktree is a fresh checkout: untracked local files such as
+      // `.agents/environments/*.toml` exist only in the source checkout, so
+      // fall back to the repository's main root (the parent of the git common dir).
+      const mainRoot = await resolveMainRepoRoot(git, root, signal)
+      if (mainRoot !== null && mainRoot !== root) {
+        found = await findFirstEnvFileInRoot(mainRoot)
       }
     }
   }
@@ -143,7 +180,7 @@ export function parseEnvConfig(text, sourcePath, source) {
       const item = objectOf(entry)
       if (typeof item.name !== 'string' || typeof item.command !== 'string') continue
       const icon = ACTION_ICONS.includes(item.icon) ? item.icon : null
-      const actionPlatform = typeof item.platform === 'string' && PLATFORMS.includes(item.platform) ? item.platform : (typeof item.platform === 'string' ? item.platform : null)
+      const actionPlatform = typeof item.platform === 'string' && item.platform.length > 0 ? item.platform : null
       const normalized = { name: item.name, icon, command: item.command, platform: actionPlatform }
       allActions.push(normalized)
       if (actionPlatform !== null && actionPlatform !== platform) continue
@@ -155,7 +192,7 @@ export function parseEnvConfig(text, sourcePath, source) {
     source,
     disabled: false,
     version: Number.isInteger(doc.version) ? doc.version : 1,
-    name: typeof doc.name === 'string' && doc.name.length > 0 ? doc.name : basenameOf(sourcePath),
+    name: typeof doc.name === 'string' && doc.name.length > 0 ? doc.name : inferEnvName(sourcePath),
     setup,
     setupScripts,
     cleanup,
@@ -377,10 +414,11 @@ function objectOf(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
 
-function basenameOf(sourcePath) {
+function inferEnvName(sourcePath) {
   if (sourcePath === null) return 'Local environment'
-  const segments = sourcePath.split('/')
-  return segments.length > 3 ? segments[segments.length - 3] : sourcePath
+  const segments = sourcePath.split(/[\\/]/).filter(Boolean)
+  // For `<repo>/.agents/environments/<file>.toml`, use the repository folder name.
+  return segments.length >= 4 ? segments[segments.length - 4] : basename(sourcePath, '.toml')
 }
 
 function emptyConfig(sourcePath, source, disabled) {
