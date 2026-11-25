@@ -1673,18 +1673,27 @@ window.__ModuleLoader__.load({
 .dshwt-env-project { display: flex; flex-direction: column; border-bottom: 0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.12)); }
 .dshwt-env-project:last-child { border-bottom: 0; }
 .dshwt-env-proj-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; }
+.dshwt-env-project-has-children .dshwt-env-proj-row { padding-bottom: 8px; }
 .dshwt-env-proj-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; text-align: left; font: inherit; color: var(--dsw-alias-label-primary, inherit); cursor: pointer; }
 .dshwt-env-proj-main:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: 2px; border-radius: var(--dsw-radius-sm, 8px); }
-.dshwt-env-proj-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--dsw-alias-label-secondary, #57606a); }
+.dshwt-env-proj-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--dsw-alias-label-secondary, #57606a); transition: color 120ms ease; }
+@media (hover: hover) { .dshwt-env-proj-main:hover .dshwt-env-proj-icon { color: var(--dsw-alias-label-primary, inherit); } }
 .dshwt-env-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .dshwt-env-name { font-size: 14px; line-height: 22px; font-weight: 500; color: var(--dsw-alias-label-primary, inherit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshwt-env-sub { font-size: 12.5px; line-height: 18px; color: var(--dsw-alias-label-tertiary, #656d76); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dshwt-env-children { display: flex; flex-direction: column; border-top: 0.5px solid var(--dsw-alias-border-l1, rgba(128,128,128,.1)); }
-.dshwt-env-child-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px; border: 0; border-bottom: 0.5px solid var(--dsw-alias-border-l1, rgba(128,128,128,.08)); background: transparent; text-align: left; font: inherit; cursor: pointer; border-radius: var(--dsw-radius-sm, 8px); transition: background 120ms ease; }
-.dshwt-env-child-row:last-child { border-bottom: 0; }
-@media (hover: hover) { .dshwt-env-child-row:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.06)); } }
+.dshwt-env-children { display: flex; flex-direction: column; gap: 2px; margin: 0 0 12px 10px; padding-left: 12px; border-left: 1px solid var(--dsw-alias-border-l2, rgba(128,128,128,.18)); }
+.dshwt-env-child-row { box-sizing: border-box; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 8px 7px 10px; border: 0; background: transparent; text-align: left; font: inherit; cursor: pointer; border-radius: var(--dsw-radius-sm, 8px); transition: background 120ms ease; }
+@media (hover: hover) { .dshwt-env-child-row:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.08)); } }
 .dshwt-env-child-row:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: 2px; }
-.dshwt-env-chevron-right { flex: none; display: inline-flex; color: var(--dsw-alias-label-tertiary, #656d76); }
+.dshwt-env-child-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.dshwt-env-child-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: var(--dsw-alias-label-tertiary, #656d76); transition: color 120ms ease; }
+.dshwt-env-child-name { font-size: 13px; line-height: 20px; font-weight: 450; color: var(--dsw-alias-label-primary, inherit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshwt-env-child-file { flex: none; padding: 1px 6px; border-radius: var(--dsw-radius-xs, 4px); background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,.09)); font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 11.5px; line-height: 16px; color: var(--dsw-alias-label-tertiary, #656d76); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshwt-env-chevron-right { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 14px; color: var(--dsw-alias-label-tertiary, #656d76); transition: color 120ms ease, transform 120ms ease; }
+@media (hover: hover) {
+  .dshwt-env-child-row:hover .dshwt-env-child-icon { color: var(--dsw-alias-label-secondary, #57606a); }
+  .dshwt-env-child-row:hover .dshwt-env-chevron-right { color: var(--dsw-alias-label-primary, inherit); transform: translateX(2px); }
+}
 
 /* Detail preview & Editor header */
 .dshwt-env-top { display: flex; flex-direction: column; gap: 8px; }
@@ -1793,6 +1802,17 @@ window.__ModuleLoader__.load({
       },
       h('rect', { x: 5, y: 3.5, width: 14, height: 17, rx: 2.5 }),
       h('path', { d: 'M9 8h6M9 12h6M9 16h4M3.5 8h2M3.5 12h2M3.5 16h2' }))
+    }
+    function EnvFileIcon({ size = 14 }) {
+      return h('svg', {
+        viewBox: '0 0 24 24', width: size, height: size,
+        fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true,
+        style: { display: 'block' },
+      },
+      h('path', { d: 'M14.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5Z' }),
+      h('polyline', { points: '14 3.5 14 9 19 9' }),
+      h('path', { d: 'M9 13.5h6M9 17h4' }))
     }
     function PlusIcon({ size = 14 }) {
       return h('svg', {
@@ -3274,7 +3294,11 @@ window.__ModuleLoader__.load({
           : (projects ?? []).length === 0
             ? h('div', { className: 'dshwt-managed-empty' }, t('env.noProjects'))
             : h('div', { className: 'dshwt-env-projects', role: 'list' },
-              (projects ?? []).map(project => h('div', { key: project.root, className: 'dshwt-env-project', role: 'listitem' },
+              (projects ?? []).map(project => h('div', {
+                key: project.root,
+                className: `dshwt-env-project ${project.environments.length > 0 ? 'dshwt-env-project-has-children' : ''}`,
+                role: 'listitem',
+              },
                 h('div', { className: 'dshwt-env-proj-row' },
                   h('button', {
                     type: 'button',
@@ -3318,7 +3342,7 @@ window.__ModuleLoader__.load({
                   ? h('div', { className: 'dshwt-env-children' },
                     project.environments.map(env => {
                       const label = env.valid ? (env.name || env.fileName) : t('env.parseError')
-                      const subtitle = env.fileName
+                      const showFileBadge = !env.valid || label !== env.fileName
                       return h('button', {
                         key: env.configPath,
                         type: 'button',
@@ -3326,10 +3350,11 @@ window.__ModuleLoader__.load({
                         title: env.relativePath,
                         onClick: () => setView({ mode: 'detail', projectRoot: project.root, configPath: env.configPath }),
                       },
-                        h('span', { className: 'dshwt-env-copy' },
-                          h('span', { className: 'dshwt-env-name', style: env.valid ? undefined : { color: 'var(--dsw-alias-state-error-primary)' } }, label),
-                          h('span', { className: 'dshwt-env-sub' }, subtitle)),
-                        h('span', { className: 'dshwt-env-chevron-right' }, h(ChevronRightIcon, { size: 15 })))
+                        h('span', { className: 'dshwt-env-child-main' },
+                          h('span', { className: 'dshwt-env-child-icon', 'aria-hidden': true }, h(EnvFileIcon, { size: 14 })),
+                          h('span', { className: 'dshwt-env-child-name', style: env.valid ? undefined : { color: 'var(--dsw-alias-state-error-primary)' } }, label),
+                          showFileBadge ? h('span', { className: 'dshwt-env-child-file' }, env.fileName) : null),
+                        h('span', { className: 'dshwt-env-chevron-right' }, h(ChevronRightIcon, { size: 14 })))
                     }))
                   : null))),
 
