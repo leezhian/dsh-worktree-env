@@ -37,6 +37,27 @@ export async function sourceCheckoutStatus(git, root, configuredWorktreeDir, sig
 }
 
 /**
+ * Validate that a proposed new local Git branch name is well-formed and does
+ * not already exist under `refs/heads/`.
+ * @param {import('./git.js').GitRunner} git
+ * @param {string} root - repository root.
+ * @param {string} branch - trimmed branch name.
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<{ ok: true } | { ok: false, code: 'INVALID_BRANCH_NAME' | 'BRANCH_ALREADY_EXISTS', message: string }>}
+ */
+export async function validateNewBranchName(git, root, branch, signal) {
+  const fmt = await git.run(root, ['check-ref-format', '--branch', branch], { allowedExitCodes: [0, 1, 128], signal })
+  if (fmt.exitCode !== 0) {
+    return { ok: false, code: 'INVALID_BRANCH_NAME', message: `Invalid branch name: ${branch}` }
+  }
+  const exists = await git.run(root, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { allowedExitCodes: [0, 1], signal })
+  if (exists.exitCode === 0) {
+    return { ok: false, code: 'BRANCH_ALREADY_EXISTS', message: `Branch already exists: ${branch}` }
+  }
+  return { ok: true }
+}
+
+/**
  * Describe the source checkout's current branch, cleanliness, and available
  * target branches for applying changes back from a worktree.
  * @param {import('./git.js').GitRunner} git
@@ -121,13 +142,9 @@ export async function executeBackflow({ git, commonDir, record, configuredWorktr
     if (rawTarget === null) {
       return fail({ blockedReason: 'INVALID_BRANCH_NAME', targetBranch: null, message: 'New branch name is required.' })
     }
-    const fmt = await git.run(root, ['check-ref-format', '--branch', rawTarget], { allowedExitCodes: [0, 1, 128], signal })
-    if (fmt.exitCode !== 0) {
-      return fail({ blockedReason: 'INVALID_BRANCH_NAME', targetBranch: rawTarget, message: `Invalid branch name: ${rawTarget}` })
-    }
-    const exists = await git.run(root, ['show-ref', '--verify', '--quiet', `refs/heads/${rawTarget}`], { allowedExitCodes: [0, 1], signal })
-    if (exists.exitCode === 0) {
-      return fail({ blockedReason: 'BRANCH_ALREADY_EXISTS', targetBranch: rawTarget, message: `Branch already exists: ${rawTarget}` })
+    const validation = await validateNewBranchName(git, root, rawTarget, signal)
+    if (!validation.ok) {
+      return fail({ blockedReason: validation.code, targetBranch: rawTarget, message: validation.message })
     }
   } else if (needsSwitch && targetBranch !== null) {
     const exists = await git.run(root, ['show-ref', '--verify', '--quiet', `refs/heads/${targetBranch}`], { allowedExitCodes: [0, 1], signal })

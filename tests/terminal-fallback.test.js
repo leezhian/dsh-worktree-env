@@ -345,23 +345,69 @@ test('Tier 3: falls back to floating shell.overlay LogDrawer when both terminal 
   assert.ok(overlay !== null, 'floating overlay should open as final fallback')
 })
 
-test('Reopened archived worktree session auto-shows Restore button in top bar and removes Archive button from session menu', async () => {
+test('Reopened archived worktree session auto-shows floating Restore banner in conversation.input.dock and removes Archive button from session menu', async () => {
   let restored = false
+  let rejectSlowRestore = null
   const fetchCalls = []
+  const createdSessions = []
+  const openedSessions = []
   const { loadedModule, renderAt } = await loadClientModule({
     fetchImpl: async (url, init) => {
       fetchCalls.push({ url, init })
       if (url.includes('/restore')) {
+        if (url.includes('feat-slow')) {
+          return await new Promise((_resolve, reject) => { rejectSlowRestore = reject })
+        }
         restored = true
         return { ok: true, status: 200, text: async () => JSON.stringify({ restored: true }) }
       }
       if (url.includes('/session-actions')) {
+        if (url.includes('sess-slow-1')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ cwd: '/repo', branch: 'feat-slow', inWorktree: true, archivedWorktree: { id: '/repo/.agents/worktrees/feat-slow', path: '/repo/.agents/worktrees/feat-slow', branch: 'feat-slow', hasSnapshot: true }, actions: [], activeOperations: [] }),
+          }
+        }
+        if (url.includes('sess-arch-2')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ cwd: '/repo', branch: 'feat-2', inWorktree: true, archivedWorktree: { id: '/repo/.agents/worktrees/feat-2', path: '/repo/.agents/worktrees/feat-2', branch: 'feat-2', hasSnapshot: false }, actions: [], activeOperations: [] }),
+          }
+        }
+        const isOther = url.includes('sess-other-2') || url.includes(encodeURIComponent('/repo-other'))
         return {
           ok: true,
           status: 200,
-          text: async () => JSON.stringify(restored
-            ? { cwd: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', inWorktree: true, archivedWorktree: null, actions: [{ name: 'dev', icon: 'run', command: 'npm run dev' }], activeOperations: [] }
-            : { cwd: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', inWorktree: true, archivedWorktree: { id: '/repo/.agents/worktrees/feat-1', path: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', hasSnapshot: true }, actions: [], activeOperations: [] }),
+          text: async () => JSON.stringify(isOther
+            ? { cwd: '/repo', branch: 'main', inWorktree: false, archivedWorktree: null, actions: [], activeOperations: [] }
+            : restored
+              ? { cwd: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', inWorktree: true, archivedWorktree: null, actions: [{ name: 'dev', icon: 'run', command: 'npm run dev' }], activeOperations: [] }
+              : { cwd: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', inWorktree: true, archivedWorktree: { id: '/repo/.agents/worktrees/feat-1', path: '/repo/.agents/worktrees/feat-1', branch: 'feat-1', hasSnapshot: true }, actions: [], activeOperations: [] }),
+        }
+      }
+      if (url.includes('/sessions/handoff-info')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ cwd: '/repo', repositoryRoot: '/repo', currentBranch: 'main', dirtyCount: 2, inWorktree: false, hasLiveAgent: false }),
+        }
+      }
+      if (url.endsWith('/sessions/handoff')) {
+        const body = JSON.parse(init?.body ?? '{}')
+        if (body.name === 'main') {
+          return { ok: false, status: 409, text: async () => JSON.stringify({ error: 'Branch already exists: main', code: 'BRANCH_ALREADY_EXISTS' }) }
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            switchedInPlace: false,
+            carriedFiles: 2,
+            conflicts: [],
+            created: { path: `/repo/.agents/worktrees/${body.name || 'dsh-auto'}`, branch: body.name || 'dsh-auto' },
+          }),
         }
       }
       if (url.endsWith('/worktrees')) {
@@ -391,9 +437,20 @@ test('Reopened archived worktree session auto-shows Restore button in top bar an
     getSnapshot: () => ({ active: 'zh', revision: 1 }),
     subscribe: () => () => {},
   }
+  const sessionsService = {
+    create: async (opts) => { createdSessions.push(opts); return 'sess-created-wt' },
+  }
+  const uiWorkspaceService = {
+    openSession: (id) => { openedSessions.push(id) },
+  }
   const ctx = {
     locale: localeService,
-    get: (key) => (key === 'locale' ? localeService : undefined),
+    get: (key) => {
+      if (key === 'locale') return localeService
+      if (key === 'sessions') return sessionsService
+      if (key === 'uiWorkspace') return uiWorkspaceService
+      return undefined
+    },
     effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
     on: () => () => {},
     slots: {
@@ -404,14 +461,50 @@ test('Reopened archived worktree session auto-shows Restore button in top bar an
   loadedModule.apply(ctx)
 
   const headerSlot = registeredSlots.find(s => s.meta.name === 'conversation.session.header.utilities')
+  const dockSlot = registeredSlots.find(s => s.meta.name === 'conversation.input.dock')
   const menuSlot = registeredSlots.find(s => s.meta.name === 'sidebar.workspaces.session.menu.item')
+  assert.ok(dockSlot, 'expected conversation.input.dock restore banner slot to be registered')
 
   const renderHeader = () => renderAt(0, () => headerSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' }))
+  const renderBanner = (sid = 'sess-arch-1', cwd = '/repo/.agents/worktrees/feat-1') => renderAt(140, () => dockSlot.component({ sessionId: sid, cwd }))
+
   renderHeader()
+  renderBanner()
   await new Promise(r => setTimeout(r, 10))
-  const archivedTree = renderHeader()
-  const restoreBtns = findNodes(archivedTree, n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-hdr-restore'))
-  assert.equal(restoreBtns.length, 1, 'archived worktree session should auto-show Restore button in top bar')
+  const bannerTree = renderBanner()
+  const restoreBtns = findNodes(bannerTree, n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-btn-primary'))
+  assert.equal(restoreBtns.length, 1, 'archived worktree session should show floating Restore banner in conversation.input.dock')
+
+  // Switching to another session must immediately hide the banner on the very first frame (zero bleed!)
+  assert.equal(renderBanner('sess-other-2', '/repo'), null, 'banner must never bleed into another session on switch')
+
+  // Switching cwd when sessionId is null must also clear on frame 0 (no stale cwd flash)
+  renderBanner(null, '/repo/.agents/worktrees/feat-1')
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(renderBanner(null, '/repo/.agents/worktrees/feat-1') !== null)
+  assert.equal(renderBanner(null, '/repo-other'), null, 'cwd-only switch must clear banner on frame 0')
+
+  // Switching sessions while an async restore is in-flight must never bleed error/clear into the new session
+  renderBanner('sess-slow-1', '/repo')
+  await new Promise(r => setTimeout(r, 10))
+  const slowBtn = findNodes(renderBanner('sess-slow-1', '/repo'), n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-btn-primary'))[0]
+  assert.ok(slowBtn)
+  slowBtn.props.onClick()
+  // Switch to another archived session before slow restore settles
+  renderBanner('sess-arch-2', '/repo')
+  await new Promise(r => setTimeout(r, 10))
+  assert.ok(rejectSlowRestore, 'expected slow restore promise to be in-flight')
+  rejectSlowRestore(new Error('slow restore failed'))
+  await new Promise(r => setTimeout(r, 10))
+  const arch2Tree = renderBanner('sess-arch-2', '/repo')
+  assert.ok(arch2Tree !== null, 'switching mid-restore must keep new session banner intact')
+  assert.equal(findNodes(arch2Tree, n => n.props?.role === 'alert').length, 0, 'in-flight restore error must not bleed into newly active session')
+
+  // Switching back to the archived session re-fetches and displays the banner again
+  renderBanner('sess-arch-1', '/repo/.agents/worktrees/feat-1')
+  await new Promise(r => setTimeout(r, 10))
+  const reenteredBtns = findNodes(renderBanner('sess-arch-1', '/repo/.agents/worktrees/feat-1'), n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-btn-primary'))
+  assert.equal(reenteredBtns.length, 1)
 
   const renderMenu = () => renderAt(50, () => menuSlot.component({ sessionId: 'sess-arch-1', cwd: '/repo/.agents/worktrees/feat-1' }))
 
@@ -422,13 +515,15 @@ test('Reopened archived worktree session auto-shows Restore button in top bar an
   assert.equal(archivedMenuButtons.length, 1, 'archived worktree session menu should show only Restore worktree')
   assert.equal(archivedMenuButtons[0].children[1], '恢复工作树')
 
-  // Click Restore -> calls POST .../restore and flips back to quick actions
-  restoreBtns[0].props.onClick()
+  // Click Restore inside banner -> calls POST .../restore, hides banner, and flips top bar to quick actions
+  reenteredBtns[0].props.onClick()
   await new Promise(r => setTimeout(r, 20))
+  assert.equal(renderBanner('sess-arch-1', '/repo/.agents/worktrees/feat-1'), null, 'banner should disappear after restoring')
+  renderHeader()
+  await new Promise(r => setTimeout(r, 10))
   const restoredTree = renderHeader()
-  assert.equal(findNodes(restoredTree, n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-hdr-restore')).length, 0)
   assert.equal(findNodes(restoredTree, n => n.type === 'button' && n.props?.className === 'dshwt-hdr-btn').length, 1)
-  assert.equal(fetchCalls.filter(c => c.url.includes('/restore')).length, 1)
+  assert.equal(fetchCalls.filter(c => c.url.includes('/restore') && !c.url.includes('feat-slow')).length, 1)
 
   // After restoring: notifyEnvChanged() updates the session menu automatically -> shows only Apply changes (no Archive button)
   renderMenu()
@@ -443,6 +538,51 @@ test('Reopened archived worktree session auto-shows Restore button in top bar an
   activeMenuButtons[0].props.onClick()
   const overlayTree = renderAt(100, () => overlaySlot.component())
   assert.ok(overlayTree !== null, 'clicking Apply changes should open ApplyBackflowModal in shell.overlay')
+
+  // Clicking Handoff on a non-worktree session opens HandoffModal directly and supports full idle-session handoff + opening chat
+  const renderLocalMenu = () => renderAt(80, () => menuSlot.component({ sessionId: 'sess-local-1', cwd: '/repo' }))
+  renderLocalMenu()
+  await new Promise(r => setTimeout(r, 10))
+  const localMenuButtons = findNodes(renderLocalMenu(), n => n.type === 'button' && n.props?.role === 'menuitem')
+  assert.equal(localMenuButtons.length, 1)
+  assert.equal(localMenuButtons[0].children[1], '带改动转入 Worktree')
+  localMenuButtons[0].props.onClick()
+
+  const renderOverlay = () => renderAt(200, () => overlaySlot.component())
+  const handoffInitial = renderOverlay()
+  assert.ok(handoffInitial !== null, 'clicking Handoff should open HandoffModal in shell.overlay')
+  const handoffNode = findNodes(handoffInitial, n => typeof n.type === 'function' && n.type.name === 'HandoffModal')[0]
+  assert.ok(handoffNode, 'expected HandoffModal element inside WorktreeOverlays')
+  const renderHandoff = () => renderAt(240, () => handoffNode.type(handoffNode.props))
+
+  renderHandoff()
+  await new Promise(r => setTimeout(r, 10))
+  const handoffLoaded = renderHandoff()
+  const branchInput = findNodes(handoffLoaded, n => n.type === 'input' && n.props?.className === 'dshwt-input')[0]
+  assert.ok(branchInput, 'HandoffModal should render branch name input after loading handoff-info')
+
+  // Existing branch error should use dedicated modal.handoff.branchExists copy (not apply modal dropdown copy)
+  branchInput.props.onChange({ target: { value: 'main' } })
+  const dupSubmitBtn = findNodes(renderHandoff(), n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-btn-primary'))[0]
+  dupSubmitBtn.props.onClick()
+  await new Promise(r => setTimeout(r, 10))
+  const dupAlert = findNodes(renderHandoff(), n => n.props?.role === 'alert')[0]
+  assert.equal(dupAlert?.children?.[0], 'modal.handoff.branchExists:main')
+
+  // Valid branch name -> POST /sessions/handoff -> offers "Open chat in worktree" -> creates & opens session in created path
+  const input2 = findNodes(renderHandoff(), n => n.type === 'input' && n.props?.className === 'dshwt-input')[0]
+  input2.props.onChange({ target: { value: 'feat/ui-handoff' } })
+  const validSubmitBtn = findNodes(renderHandoff(), n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-btn-primary'))[0]
+  validSubmitBtn.props.onClick()
+  await new Promise(r => setTimeout(r, 15))
+  const doneTree = renderHandoff()
+  const openChatBtn = findNodes(doneTree, n => n.type === 'button' && String(n.props?.className ?? '').includes('dshwt-btn-primary'))[0]
+  assert.ok(openChatBtn, 'idle handoff completion should show Open chat in worktree button')
+  openChatBtn.props.onClick()
+  await new Promise(r => setTimeout(r, 10))
+  assert.equal(createdSessions.length, 1)
+  assert.equal(createdSessions[0].cwd, '/repo/.agents/worktrees/feat/ui-handoff')
+  assert.deepEqual(openedSessions, ['sess-created-wt'])
 })
 
 test('Tier 1: injects DSH_* variables only (no CODEX_* leakage) when command references DSH_WORKTREE_PATH', async () => {

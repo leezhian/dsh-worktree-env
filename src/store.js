@@ -23,6 +23,7 @@ import { PREFERENCES } from './config.js'
  * @property {number} createdAt - epoch milliseconds.
  * @property {number} lastAccessedAt - epoch milliseconds of last observed use.
  * @property {string | null} createdSessionId - session that created it, when known.
+ * @property {string[]} [sessionIds] - sessions observed using this worktree.
  * @property {'none' | 'running' | 'succeeded' | 'failed' | 'not-configured'} setupState
  * @property {string | null} setupError - last setup failure summary.
  * @property {string | null} snapshotRef - snapshot ref written at archive time.

@@ -6,7 +6,7 @@
  *   `environment.toml` editor with per-platform script switcher
  * - Session top-bar quick actions (`conversation.session.header.utilities`)
  *   with portaled menu and floating live SSE log drawer
- * - Session menu items (`sidebar.workspaces.session.menu.item`) for /worktree
+ * - Session menu items (`sidebar.workspaces.session.menu.item`) for Worktree handoff, backflow, and restore
  */
 window.__ModuleLoader__.load({
   id: 'dsh-worktree-env',
@@ -115,6 +115,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': '快照归档 Worktree',
       'modal.archive.desc': '归档「{branch}」将执行 cleanup 脚本并移除检出目录以释放磁盘。若有未提交改动会自动保存隐藏快照，随时可无损恢复，分支本身保留。',
       'modal.archive.submit': '确认归档',
+      'modal.handoff.title': '带改动转入 Worktree',
+      'modal.handoff.desc': '从当前分支「{branch}」创建新的隔离工作树，并在不清空主目录的前提下将未提交改动无损带入其中。',
+      'modal.handoff.branchLabel': '工作树分支名（可选）',
+      'modal.handoff.branchPlaceholder': '留空自动生成（如 feat/login）',
+      'modal.handoff.carryLabel': '携带当前 {count} 个未提交改动',
+      'modal.handoff.cleanHint': '当前主目录工作区干净，将基于当前提交创建新工作树。',
+      'modal.handoff.submit': '转入 Worktree',
+      'modal.handoff.doneInPlace': '当前会话已转入工作树「{branch}」（已带入 {count} 个文件的改动）。',
+      'modal.handoff.doneCreated': '已创建工作树「{branch}」（已带入 {count} 个文件的改动）。点击下方按钮即可在该工作树中打开会话。',
+      'modal.handoff.openChat': '在新工作树中打开会话',
+      'modal.handoff.branchExists': '分支「{branch}」已存在，请更换其他名称。',
       'env.selectProject': '选择项目',
       'env.addProject': '添加项目',
       'env.addProjectTitle': '添加项目目录',
@@ -173,15 +184,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': '运行中',
       'header.actions.focusTerminal': '切换到 {name} 终端',
       'header.actions.runNewTerminal': '在新终端中运行',
-      'header.restore.label': '恢复工作树',
-      'header.restore.restoring': '恢复中…',
-      'header.restore.tipSnapshot': '工作树「{branch}」已归档（含恢复快照），点击一键恢复目录与未提交改动',
-      'header.restore.tipPlain': '工作树「{branch}」已归档，点击重新检出目录',
+      'banner.restore.title': '工作树「{branch}」已归档',
+      'banner.restore.descSnapshot': '已保存未提交改动的恢复快照，恢复后可无损继续当前会话。',
+      'banner.restore.descPlain': '本地检出目录已清理，重新检出分支后即可继续当前会话。',
+      'banner.restore.button': '恢复工作树',
+      'banner.restore.restoring': '恢复中…',
       'menu.handoff': '带改动转入 Worktree',
       'menu.apply': '应用改动到主目录',
       'menu.restore': '恢复工作树',
-      'menu.sending': '已发送 /worktree 指令',
-      'menu.sendFailed': '指令发送失败',
+      'menu.sendFailed': '操作失败',
       'logs.title': '运行日志',
       'logs.copy': '复制',
       'logs.copied': '已复制',
@@ -272,6 +283,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': 'Archive worktree',
       'modal.archive.desc': 'Archiving "{branch}" runs the cleanup script and removes the checkout directory. Uncommitted work is saved to a hidden Git snapshot so it can be restored losslessly.',
       'modal.archive.submit': 'Archive worktree',
+      'modal.handoff.title': 'Move into worktree with changes',
+      'modal.handoff.desc': 'Create an isolated worktree from "{branch}" and copy uncommitted changes into it without modifying the source checkout.',
+      'modal.handoff.branchLabel': 'Worktree branch name (optional)',
+      'modal.handoff.branchPlaceholder': 'Leave empty to auto-generate (e.g. feat/login)',
+      'modal.handoff.carryLabel': 'Carry {count} uncommitted change(s)',
+      'modal.handoff.cleanHint': 'Working tree is clean. A fresh worktree will be created from the current commit.',
+      'modal.handoff.submit': 'Move to worktree',
+      'modal.handoff.doneInPlace': 'Session moved into worktree "{branch}" ({count} changed file(s) carried).',
+      'modal.handoff.doneCreated': 'Created worktree "{branch}" ({count} changed file(s) carried). Open a chat in it below.',
+      'modal.handoff.openChat': 'Open chat in worktree',
+      'modal.handoff.branchExists': 'Branch "{branch}" already exists. Please choose another name.',
       'env.selectProject': 'Select a project',
       'env.addProject': 'Add project',
       'env.addProjectTitle': 'Add project folder',
@@ -330,15 +352,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': 'Running',
       'header.actions.focusTerminal': 'Focus {name} terminal',
       'header.actions.runNewTerminal': 'Run in a new terminal',
-      'header.restore.label': 'Restore worktree',
-      'header.restore.restoring': 'Restoring…',
-      'header.restore.tipSnapshot': 'Worktree "{branch}" was archived with a recovery snapshot. Click to restore the directory and uncommitted changes.',
-      'header.restore.tipPlain': 'Worktree "{branch}" was archived. Click to check out the directory again.',
+      'banner.restore.title': 'Worktree "{branch}" was archived',
+      'banner.restore.descSnapshot': 'Uncommitted changes are saved in a recovery snapshot. Restore to continue this session losslessly.',
+      'banner.restore.descPlain': 'The local checkout was cleaned up. Restore to check out the branch and continue.',
+      'banner.restore.button': 'Restore worktree',
+      'banner.restore.restoring': 'Restoring…',
       'menu.handoff': 'Move into worktree with changes',
       'menu.apply': 'Apply changes to source',
       'menu.restore': 'Restore worktree',
-      'menu.sending': 'Sent the /worktree command',
-      'menu.sendFailed': 'Failed to send the command',
+      'menu.sendFailed': 'Action failed',
       'logs.title': 'Operation logs',
       'logs.copy': 'Copy',
       'logs.copied': 'Copied',
@@ -429,6 +451,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': 'ワークツリーをアーカイブ',
       'modal.archive.desc': '「{branch}」をアーカイブすると cleanup スクリプトを実行しディレクトリを削除します。未コミットの変更は非表示の Git スナップショットに保存され復元可能です。',
       'modal.archive.submit': 'アーカイブする',
+      'modal.handoff.title': '変更を引き継いで Worktree へ移動',
+      'modal.handoff.desc': '現在のブランチ「{branch}」から隔離ワークツリーを作成し、元ディレクトリを変更せずに未コミットの変更を引き継ぎます。',
+      'modal.handoff.branchLabel': 'ワークツリーブランチ名（任意）',
+      'modal.handoff.branchPlaceholder': '空欄で自動生成（例: feat/login）',
+      'modal.handoff.carryLabel': '現在の未コミット変更（{count} 件）を引き継ぐ',
+      'modal.handoff.cleanHint': '作業ツリーはクリーンです。現在のコミットから新しいワークツリーを作成します。',
+      'modal.handoff.submit': 'Worktree へ移動',
+      'modal.handoff.doneInPlace': 'セッションをワークツリー「{branch}」へ移動しました（{count} 件の変更を引き継ぎ）。',
+      'modal.handoff.doneCreated': 'ワークツリー「{branch}」を作成しました（{count} 件の変更を引き継ぎ）。下のボタンからチャットを開けます。',
+      'modal.handoff.openChat': 'このワークツリーでチャットを開く',
+      'modal.handoff.branchExists': 'ブランチ「{branch}」は既に存在します。別の名前を指定してください。',
       'env.selectProject': 'プロジェクトを選択',
       'env.addProject': 'プロジェクトを追加',
       'env.addProjectTitle': 'プロジェクトフォルダを追加',
@@ -487,15 +520,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': '実行中',
       'header.actions.focusTerminal': '{name} のターミナルを表示',
       'header.actions.runNewTerminal': '新しいターミナルで実行',
-      'header.restore.label': 'ワークツリーを復元',
-      'header.restore.restoring': '復元中…',
-      'header.restore.tipSnapshot': 'ワークツリー「{branch}」は復元スナップショット付きでアーカイブされています。クリックしてディレクトリと未コミットの変更を復元します。',
-      'header.restore.tipPlain': 'ワークツリー「{branch}」はアーカイブされています。クリックしてディレクトリを再チェックアウトします。',
+      'banner.restore.title': 'ワークツリー「{branch}」はアーカイブされています',
+      'banner.restore.descSnapshot': '未コミットの変更は復元スナップショットに保存されています。復元するとそのまま続行できます。',
+      'banner.restore.descPlain': 'ローカルディレクトリはクリーンアップされました。復元してブランチを再チェックアウトすると続行できます。',
+      'banner.restore.button': 'ワークツリーを復元',
+      'banner.restore.restoring': '復元中…',
       'menu.handoff': '変更を引き継いで Worktree へ移動',
       'menu.apply': '変更を元ディレクトリに適用',
       'menu.restore': 'ワークツリーを復元',
-      'menu.sending': '/worktree コマンドを送信しました',
-      'menu.sendFailed': 'コマンドの送信に失敗しました',
+      'menu.sendFailed': '操作に失敗しました',
       'logs.title': '実行ログ',
       'logs.copy': 'コピー',
       'logs.copied': 'コピーしました',
@@ -586,6 +619,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': 'Archivar worktree',
       'modal.archive.desc': 'Archivar "{branch}" ejecuta el script de limpieza y elimina el directorio. Los cambios sin confirmar se guardan en una instantánea oculta de Git.',
       'modal.archive.submit': 'Archivar worktree',
+      'modal.handoff.title': 'Mover a worktree con cambios',
+      'modal.handoff.desc': 'Crea un worktree aislado desde "{branch}" y copia los cambios sin confirmar sin modificar el directorio origen.',
+      'modal.handoff.branchLabel': 'Nombre de la rama del worktree (opcional)',
+      'modal.handoff.branchPlaceholder': 'Déjalo vacío para generarlo automáticamente (p. ej., feat/login)',
+      'modal.handoff.carryLabel': 'Incluir {count} cambio(s) sin confirmar',
+      'modal.handoff.cleanHint': 'El árbol de trabajo está limpio. Se creará un worktree nuevo desde el commit actual.',
+      'modal.handoff.submit': 'Mover a worktree',
+      'modal.handoff.doneInPlace': 'Sesión movida al worktree "{branch}" ({count} archivo(s) incluidos).',
+      'modal.handoff.doneCreated': 'Se creó el worktree "{branch}" ({count} archivo(s) incluidos). Abre un chat en él abajo.',
+      'modal.handoff.openChat': 'Abrir chat en el worktree',
+      'modal.handoff.branchExists': 'La rama "{branch}" ya existe. Elige otro nombre.',
       'env.selectProject': 'Seleccionar un proyecto',
       'env.addProject': 'Añadir proyecto',
       'env.addProjectTitle': 'Añadir carpeta de proyecto',
@@ -644,15 +688,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': 'En ejecución',
       'header.actions.focusTerminal': 'Ir al terminal de {name}',
       'header.actions.runNewTerminal': 'Ejecutar en un nuevo terminal',
-      'header.restore.label': 'Restaurar worktree',
-      'header.restore.restoring': 'Restaurando…',
-      'header.restore.tipSnapshot': 'El worktree "{branch}" se archivó con una instantánea de recuperación. Haz clic para restaurar el directorio y los cambios sin confirmar.',
-      'header.restore.tipPlain': 'El worktree "{branch}" está archivado. Haz clic para volver a extraer el directorio.',
+      'banner.restore.title': 'El worktree "{branch}" está archivado',
+      'banner.restore.descSnapshot': 'Los cambios sin confirmar están guardados en una instantánea. Restaura para continuar sin pérdidas.',
+      'banner.restore.descPlain': 'El directorio local fue limpiado. Restaura para volver a extraer la rama y continuar.',
+      'banner.restore.button': 'Restaurar worktree',
+      'banner.restore.restoring': 'Restaurando…',
       'menu.handoff': 'Mover a worktree con cambios',
       'menu.apply': 'Aplicar cambios al origen',
       'menu.restore': 'Restaurar worktree',
-      'menu.sending': 'Comando /worktree enviado',
-      'menu.sendFailed': 'No se pudo enviar el comando',
+      'menu.sendFailed': 'Error en la operación',
       'logs.title': 'Registros de operación',
       'logs.copy': 'Copiar',
       'logs.copied': 'Copiado',
@@ -743,6 +787,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': 'Archiver le worktree',
       'modal.archive.desc': 'L’archivage de « {branch} » exécute le script de nettoyage et supprime le répertoire. Les modifications non validées sont conservées dans un instantané Git masqué.',
       'modal.archive.submit': 'Archiver le worktree',
+      'modal.handoff.title': 'Basculer dans un worktree avec les modifications',
+      'modal.handoff.desc': 'Crée un worktree isolé depuis « {branch} » et y copie les modifications non validées sans toucher à la source.',
+      'modal.handoff.branchLabel': 'Nom de branche du worktree (facultatif)',
+      'modal.handoff.branchPlaceholder': 'Laisser vide pour générer automatiquement (ex. feat/login)',
+      'modal.handoff.carryLabel': 'Emporter {count} modification(s) non validée(s)',
+      'modal.handoff.cleanHint': 'L’arbre de travail est propre. Un nouveau worktree sera créé depuis le commit courant.',
+      'modal.handoff.submit': 'Basculer en worktree',
+      'modal.handoff.doneInPlace': 'Session basculée vers le worktree « {branch} » ({count} fichier(s) emporté(s)).',
+      'modal.handoff.doneCreated': 'Worktree « {branch} » créé ({count} fichier(s) emporté(s)). Ouvrez une discussion ci-dessous.',
+      'modal.handoff.openChat': 'Ouvrir une discussion dans le worktree',
+      'modal.handoff.branchExists': 'La branche « {branch} » existe déjà. Veuillez choisir un autre nom.',
       'env.selectProject': 'Sélectionner un projet',
       'env.addProject': 'Ajouter un projet',
       'env.addProjectTitle': 'Ajouter un dossier de projet',
@@ -801,15 +856,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': 'En cours',
       'header.actions.focusTerminal': 'Afficher le terminal {name}',
       'header.actions.runNewTerminal': 'Exécuter dans un nouveau terminal',
-      'header.restore.label': 'Restaurer le worktree',
-      'header.restore.restoring': 'Restauration…',
-      'header.restore.tipSnapshot': 'Le worktree « {branch} » a été archivé avec un instantané. Cliquez pour restaurer le dossier et les modifications non validées.',
-      'header.restore.tipPlain': 'Le worktree « {branch} » est archivé. Cliquez pour recréer le dossier.',
+      'banner.restore.title': 'Le worktree « {branch} » est archivé',
+      'banner.restore.descSnapshot': 'Les modifications non validées sont enregistrées dans un instantané. Restaurez pour reprendre sans perte.',
+      'banner.restore.descPlain': 'Le dossier local a été nettoyé. Restaurez pour recréer la branche et continuer.',
+      'banner.restore.button': 'Restaurer le worktree',
+      'banner.restore.restoring': 'Restauration…',
       'menu.handoff': 'Basculer dans un worktree avec les modifications',
       'menu.apply': 'Appliquer les modifications à la source',
       'menu.restore': 'Restaurer le worktree',
-      'menu.sending': 'Commande /worktree envoyée',
-      'menu.sendFailed': 'Échec de l’envoi de la commande',
+      'menu.sendFailed': 'Échec de l’opération',
       'logs.title': 'Journaux d’opération',
       'logs.copy': 'Copier',
       'logs.copied': 'Copié',
@@ -900,6 +955,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': 'Worktree archivieren',
       'modal.archive.desc': 'Beim Archivieren von „{branch}“ wird das Cleanup-Skript ausgeführt und das Verzeichnis entfernt. Nicht committete Änderungen werden als versteckter Git-Snapshot gesichert.',
       'modal.archive.submit': 'Worktree archivieren',
+      'modal.handoff.title': 'Mit Änderungen in Worktree wechseln',
+      'modal.handoff.desc': 'Erstellt einen isolierten Worktree von „{branch}“ und übernimmt nicht committete Änderungen, ohne das Quellverzeichnis zu verändern.',
+      'modal.handoff.branchLabel': 'Worktree-Branch-Name (optional)',
+      'modal.handoff.branchPlaceholder': 'Leer lassen für automatischen Namen (z. B. feat/login)',
+      'modal.handoff.carryLabel': '{count} nicht committete Änderung(en) mitnehmen',
+      'modal.handoff.cleanHint': 'Das Arbeitsverzeichnis ist sauber. Ein neuer Worktree wird vom aktuellen Commit erstellt.',
+      'modal.handoff.submit': 'In Worktree wechseln',
+      'modal.handoff.doneInPlace': 'Sitzung in Worktree „{branch}“ verschoben ({count} geänderte Datei(en) übernommen).',
+      'modal.handoff.doneCreated': 'Worktree „{branch}“ erstellt ({count} Datei(en) übernommen). Unten neuen Chat öffnen.',
+      'modal.handoff.openChat': 'Chat im Worktree öffnen',
+      'modal.handoff.branchExists': 'Branch „{branch}“ existiert bereits. Bitte wählen Sie einen anderen Namen.',
       'env.selectProject': 'Projekt auswählen',
       'env.addProject': 'Projekt hinzufügen',
       'env.addProjectTitle': 'Projektordner hinzufügen',
@@ -958,15 +1024,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': 'Läuft',
       'header.actions.focusTerminal': 'Zum Terminal „{name}“ wechseln',
       'header.actions.runNewTerminal': 'In neuem Terminal ausführen',
-      'header.restore.label': 'Worktree wiederherstellen',
-      'header.restore.restoring': 'Wird wiederhergestellt…',
-      'header.restore.tipSnapshot': 'Worktree „{branch}“ wurde mit einem Wiederherstellungs-Snapshot archiviert. Klicken, um Verzeichnis und uncommittete Änderungen wiederherzustellen.',
-      'header.restore.tipPlain': 'Worktree „{branch}“ wurde archiviert. Klicken, um das Verzeichnis erneut auszuchecken.',
+      'banner.restore.title': 'Worktree „{branch}“ wurde archiviert',
+      'banner.restore.descSnapshot': 'Nicht committete Änderungen sind im Wiederherstellungs-Snapshot gesichert. Zum verlustfreien Fortsetzen wiederherstellen.',
+      'banner.restore.descPlain': 'Das lokale Verzeichnis wurde bereinigt. Wiederherstellen, um den Branch erneut auszuchecken.',
+      'banner.restore.button': 'Worktree wiederherstellen',
+      'banner.restore.restoring': 'Wird wiederhergestellt…',
       'menu.handoff': 'Mit Änderungen in Worktree wechseln',
       'menu.apply': 'Änderungen auf Quelle anwenden',
       'menu.restore': 'Worktree wiederherstellen',
-      'menu.sending': 'Befehl /worktree gesendet',
-      'menu.sendFailed': 'Befehl konnte nicht gesendet werden',
+      'menu.sendFailed': 'Vorgang fehlgeschlagen',
       'logs.title': 'Ausführungsprotokolle',
       'logs.copy': 'Kopieren',
       'logs.copied': 'Kopiert',
@@ -1057,6 +1123,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': 'Архивировать worktree',
       'modal.archive.desc': 'Архивация «{branch}» выполнит скрипт cleanup и удалит каталог. Незакоммиченные изменения сохраняются в скрытый Git-снимок для восстановления.',
       'modal.archive.submit': 'Архивировать',
+      'modal.handoff.title': 'Перенести с изменениями в Worktree',
+      'modal.handoff.desc': 'Создаст изолированный worktree от ветки «{branch}» и перенесёт в него незакоммиченные изменения, не трогая исходный каталог.',
+      'modal.handoff.branchLabel': 'Имя ветки worktree (необязательно)',
+      'modal.handoff.branchPlaceholder': 'Оставьте пустым для автогенерации (напр. feat/login)',
+      'modal.handoff.carryLabel': 'Перенести незакоммиченные изменения ({count})',
+      'modal.handoff.cleanHint': 'Рабочий каталог чист. Будет создан новый worktree от текущего коммита.',
+      'modal.handoff.submit': 'Перенести в Worktree',
+      'modal.handoff.doneInPlace': 'Сеанс перенесён в worktree «{branch}» (перенесено файлов: {count}).',
+      'modal.handoff.doneCreated': 'Создан worktree «{branch}» (перенесено файлов: {count}). Откройте в нём чат ниже.',
+      'modal.handoff.openChat': 'Открыть чат в worktree',
+      'modal.handoff.branchExists': 'Ветка «{branch}» уже существует. Укажите другое имя.',
       'env.selectProject': 'Выберите проект',
       'env.addProject': 'Добавить проект',
       'env.addProjectTitle': 'Добавить папку проекта',
@@ -1115,15 +1192,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': 'Выполняется',
       'header.actions.focusTerminal': 'Перейти в терминал {name}',
       'header.actions.runNewTerminal': 'Запустить в новом терминале',
-      'header.restore.label': 'Восстановить worktree',
-      'header.restore.restoring': 'Восстановление…',
-      'header.restore.tipSnapshot': 'Worktree «{branch}» был архивирован со снимком восстановления. Нажмите, чтобы восстановить каталог и незакоммиченные изменения.',
-      'header.restore.tipPlain': 'Worktree «{branch}» архивирован. Нажмите, чтобы снова развернуть каталог.',
+      'banner.restore.title': 'Worktree «{branch}» архивирован',
+      'banner.restore.descSnapshot': 'Незакоммиченные изменения сохранены в снимке. Восстановите worktree, чтобы продолжить без потерь.',
+      'banner.restore.descPlain': 'Локальный каталог был очищен. Восстановите его, чтобы снова развернуть ветку и продолжить.',
+      'banner.restore.button': 'Восстановить worktree',
+      'banner.restore.restoring': 'Восстановление…',
       'menu.handoff': 'Перенести с изменениями в Worktree',
       'menu.apply': 'Применить изменения в источник',
       'menu.restore': 'Восстановить worktree',
-      'menu.sending': 'Команда /worktree отправлена',
-      'menu.sendFailed': 'Не удалось отправить команду',
+      'menu.sendFailed': 'Ошибка операции',
       'logs.title': 'Журнал операций',
       'logs.copy': 'Копировать',
       'logs.copied': 'Скопировано',
@@ -1214,6 +1291,17 @@ window.__ModuleLoader__.load({
       'modal.archive.title': 'Arquivar worktree',
       'modal.archive.desc': 'Arquivar "{branch}" executa o script de limpeza e remove o diretório. Alterações não confirmadas são salvas em um snapshot oculto do Git.',
       'modal.archive.submit': 'Arquivar worktree',
+      'modal.handoff.title': 'Mover para worktree com alterações',
+      'modal.handoff.desc': 'Cria um worktree isolado a partir de "{branch}" e copia as alterações não confirmadas sem modificar o diretório de origem.',
+      'modal.handoff.branchLabel': 'Nome da branch do worktree (opcional)',
+      'modal.handoff.branchPlaceholder': 'Deixe vazio para gerar automaticamente (ex.: feat/login)',
+      'modal.handoff.carryLabel': 'Levar {count} alteração(ões) não confirmada(s)',
+      'modal.handoff.cleanHint': 'O diretório está limpo. Um novo worktree será criado a partir do commit atual.',
+      'modal.handoff.submit': 'Mover para worktree',
+      'modal.handoff.doneInPlace': 'Sessão movida para o worktree "{branch}" ({count} arquivo(s) levado(s)).',
+      'modal.handoff.doneCreated': 'Worktree "{branch}" criado ({count} arquivo(s) levado(s)). Abra um chat nele abaixo.',
+      'modal.handoff.openChat': 'Abrir chat no worktree',
+      'modal.handoff.branchExists': 'A branch "{branch}" já existe. Escolha outro nome.',
       'env.selectProject': 'Selecionar um projeto',
       'env.addProject': 'Adicionar projeto',
       'env.addProjectTitle': 'Adicionar pasta do projeto',
@@ -1272,15 +1360,15 @@ window.__ModuleLoader__.load({
       'header.actions.running': 'Em execução',
       'header.actions.focusTerminal': 'Ir para o terminal de {name}',
       'header.actions.runNewTerminal': 'Executar em um novo terminal',
-      'header.restore.label': 'Restaurar worktree',
-      'header.restore.restoring': 'Restaurando…',
-      'header.restore.tipSnapshot': 'O worktree "{branch}" foi arquivado com um snapshot de recuperação. Clique para restaurar o diretório e as alterações não confirmadas.',
-      'header.restore.tipPlain': 'O worktree "{branch}" foi arquivado. Clique para recriar o diretório.',
+      'banner.restore.title': 'O worktree "{branch}" foi arquivado',
+      'banner.restore.descSnapshot': 'As alterações não confirmadas foram salvas em um snapshot. Restaure para continuar sem perdas.',
+      'banner.restore.descPlain': 'O diretório local foi limpo. Restaure para recriar a branch e continuar.',
+      'banner.restore.button': 'Restaurar worktree',
+      'banner.restore.restoring': 'Restaurando…',
       'menu.handoff': 'Mover para worktree com alterações',
       'menu.apply': 'Aplicar alterações na origem',
       'menu.restore': 'Restaurar worktree',
-      'menu.sending': 'Comando /worktree enviado',
-      'menu.sendFailed': 'Falha ao enviar o comando',
+      'menu.sendFailed': 'Falha na operação',
       'logs.title': 'Logs de operação',
       'logs.copy': 'Copiar',
       'logs.copied': 'Copiado',
@@ -1464,8 +1552,19 @@ window.__ModuleLoader__.load({
 .dshwt-hdr-split .dshwt-hdr-btn { border-radius: 0; padding: 0 7px 0 8px; }
 .dshwt-hdr-btn:disabled, .dshwt-hdr-caret:disabled { opacity: 0.45; cursor: default; }
 .dshwt-hdr-btn:focus-visible, .dshwt-hdr-caret:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: 2px; }
-.dshwt-hdr-restore { background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,.08)); color: var(--dsw-alias-label-primary, inherit); padding: 0 9px; }
-@media (hover: hover) { .dshwt-hdr-restore:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.14)); } }
+/* Session-scoped archived worktree restore banner docked directly above the composer (conversation.input.dock) */
+.dshwt-restore-dock { box-sizing: border-box; width: calc(100% - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-dock-inset, 12px) - var(--dsh-composer-dock-inset, 12px)); max-width: calc(var(--dsh-composer-card-max-width, 760px) - var(--dsh-composer-dock-inset, 12px) - var(--dsh-composer-dock-inset, 12px)); margin: 0 auto calc(0px - var(--dsh-composer-stack-gap, 8px) - 3px); padding: 0 var(--dsh-composer-dock-inset, 12px); flex: none; }
+.dshwt-restore-panel { isolation: isolate; position: relative; box-sizing: border-box; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px 12px; border-radius: var(--dsw-radius-lg, 16px) var(--dsw-radius-lg, 16px) 0 0; color: var(--dsw-alias-label-primary, inherit); font-family: var(--dsw-font-family, inherit); overflow: hidden; }
+.dshwt-restore-panel::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, #fff)); backdrop-filter: var(--dsw-menu-backdrop-filter, none); pointer-events: none; }
+.dshwt-restore-panel::after { content: ''; position: absolute; inset: 0; border-radius: inherit; border: 0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.18)); border-bottom: none; pointer-events: none; }
+.dshwt-restore-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; flex: 1; }
+.dshwt-restore-ico { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-top: 1px; color: var(--dsw-alias-label-secondary, #57606a); flex: none; }
+.dshwt-restore-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.dshwt-restore-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+.dshwt-restore-title { font-size: 13px; line-height: 19px; font-weight: 500; color: var(--dsw-alias-label-primary, inherit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshwt-restore-desc { font-size: 12px; line-height: 17px; color: var(--dsw-alias-label-tertiary, #656d76); }
+.dshwt-restore-err { font-size: 11.5px; line-height: 16px; color: var(--dsw-alias-state-error-primary, #cf222e); margin-top: 2px; }
+.dshwt-restore-act { flex: none; display: inline-flex; align-items: center; }
 .dshwt-hdr-label { max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshwt-hdr-caret { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 22px; height: 28px; padding: 0 5px; border: 0; border-left: 0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.16)); background: transparent; color: var(--dsw-alias-label-tertiary, #656d76); cursor: pointer; transition: background 120ms ease, color 120ms ease; }
 @media (hover: hover) { .dshwt-hdr-caret:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12)); color: var(--dsw-alias-label-primary, inherit); } }
@@ -2227,12 +2326,150 @@ window.__ModuleLoader__.load({
                 submitting ? t('panel.act.busy') : submitLabel))))
     }
 
-    function LogDrawerOverlay() {
+    function HandoffModal({ target, onClose, t }) {
+      const [meta, setMeta] = useState(null)
+      const [loadingMeta, setLoadingMeta] = useState(true)
+      const [metaError, setMetaError] = useState(null)
+      const [branchName, setBranchName] = useState('')
+      const [carryChanges, setCarryChanges] = useState(true)
+      const [submitting, setSubmitting] = useState(false)
+      const [submitError, setSubmitError] = useState(null)
+      const [result, setResult] = useState(null)
+      const [openingChat, setOpeningChat] = useState(false)
+
+      useEffect(() => {
+        let cancelled = false
+        setLoadingMeta(true)
+        setMetaError(null)
+        setResult(null)
+        setSubmitError(null)
+        const params = []
+        if (typeof target.sessionId === 'string' && target.sessionId.length > 0) params.push(`sessionId=${enc(target.sessionId)}`)
+        if (typeof target.cwd === 'string' && target.cwd.length > 0) params.push(`cwd=${enc(target.cwd)}`)
+        void api(`/sessions/handoff-info?${params.join('&')}`).then(
+          (value) => {
+            if (cancelled) return
+            setMeta(value)
+            setCarryChanges((value?.dirtyCount ?? 0) > 0)
+            setLoadingMeta(false)
+          },
+          (err) => {
+            if (cancelled) return
+            setMetaError(err.message)
+            setLoadingMeta(false)
+          },
+        )
+        return () => { cancelled = true }
+      }, [target.sessionId, target.cwd])
+
+      const submit = async () => {
+        if (submitting || meta === null) return
+        setSubmitting(true)
+        setSubmitError(null)
+        try {
+          const res = await api('/sessions/handoff', {
+            method: 'POST',
+            body: JSON.stringify({
+              sessionId: target.sessionId ?? undefined,
+              cwd: target.cwd ?? undefined,
+              name: branchName.trim().length > 0 ? branchName.trim() : undefined,
+              carryChanges: (meta.dirtyCount ?? 0) > 0 ? carryChanges : false,
+            }),
+          })
+          setResult(res)
+          notifyEnvChanged()
+        } catch (err) {
+          if (err?.code === 'INVALID_BRANCH_NAME') setSubmitError(t('modal.apply.invalidBranch'))
+          else if (err?.code === 'BRANCH_ALREADY_EXISTS') setSubmitError(t('modal.handoff.branchExists', { branch: branchName.trim() }))
+          else setSubmitError(err.message)
+        } finally {
+          setSubmitting(false)
+        }
+      }
+
+      const openCreatedChat = async () => {
+        if (!result?.created?.path || openingChat) return
+        setOpeningChat(true)
+        setSubmitError(null)
+        try {
+          await openWorktreeSession({ path: result.created.path })
+          onClose()
+        } catch (err) {
+          setSubmitError(err?.code === 'SESSION_SERVICE_UNAVAILABLE' ? t('error.sessionUnavailable') : err.message)
+        } finally {
+          setOpeningChat(false)
+        }
+      }
+
+      const dirtyCount = meta?.dirtyCount ?? 0
+
+      return h(ModalShell, { title: t('modal.handoff.title'), onClose },
+        meta !== null
+          ? h('p', { className: 'dshwt-modal-desc' }, t('modal.handoff.desc', { branch: meta.currentBranch || 'HEAD' }))
+          : null,
+        metaError !== null ? h('div', { className: 'dshwt-banner', 'data-tone': 'err', role: 'alert' }, metaError) : null,
+        meta !== null && result === null
+          ? h(React.Fragment, null,
+            h('div', { className: 'dshwt-field' },
+              h('label', { className: 'dshwt-label' }, t('modal.handoff.branchLabel')),
+              h('input', {
+                className: 'dshwt-input',
+                placeholder: t('modal.handoff.branchPlaceholder'),
+                value: branchName,
+                disabled: submitting,
+                spellCheck: false,
+                autoComplete: 'off',
+                autoFocus: true,
+                onChange: e => { setBranchName(e.target.value); setSubmitError(null) },
+                onKeyDown: e => {
+                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
+                  if (e.key === 'Enter' && !submitting) void submit()
+                },
+              })),
+            dirtyCount > 0
+              ? h('label', { className: 'dshwt-radio-card', 'data-selected': carryChanges },
+                h('input', {
+                  type: 'checkbox',
+                  checked: carryChanges,
+                  disabled: submitting,
+                  onChange: e => setCarryChanges(e.target.checked),
+                }),
+                h('span', null, t('modal.handoff.carryLabel', { count: dirtyCount })))
+              : h('div', { className: 'dshwt-banner', 'data-tone': 'info' }, t('modal.handoff.cleanHint')))
+          : null,
+        result !== null
+          ? h('div', { className: 'dshwt-banner', 'data-tone': 'ok', role: 'status' },
+            result.switchedInPlace
+              ? t('modal.handoff.doneInPlace', { branch: result.created?.branch || '', count: result.carriedFiles ?? 0 })
+              : t('modal.handoff.doneCreated', { branch: result.created?.branch || '', count: result.carriedFiles ?? 0 }))
+          : null,
+        result !== null && Array.isArray(result.conflicts) && result.conflicts.length > 0
+          ? h('div', { className: 'dshwt-banner', 'data-tone': 'warn', role: 'alert', style: { flexDirection: 'column', gap: 4 } },
+            h('div', null, t('modal.apply.conflict')),
+            h('div', { style: { fontFamily: 'var(--ds-font-family-code, Menlo, monospace)', fontSize: 11.5 } }, result.conflicts.join('\n')))
+          : null,
+        submitError !== null ? h('div', { className: 'dshwt-banner', 'data-tone': 'err', role: 'alert' }, submitError) : null,
+        h('div', { className: 'dshwt-modal-foot' },
+          result !== null
+            ? (result.switchedInPlace
+              ? h('button', { type: 'button', className: 'dshwt-btn dshwt-btn-primary', onClick: onClose }, t('modal.done'))
+              : h(React.Fragment, null,
+                h('button', { type: 'button', className: 'dshwt-btn', disabled: openingChat, onClick: onClose }, t('modal.done')),
+                h('button', { type: 'button', className: 'dshwt-btn dshwt-btn-primary', disabled: openingChat, onClick: () => void openCreatedChat() },
+                  openingChat ? t('panel.act.busy') : t('modal.handoff.openChat'))))
+            : h(React.Fragment, null,
+              h('button', { type: 'button', className: 'dshwt-btn', disabled: submitting, onClick: onClose }, t('modal.cancel')),
+              h('button', { type: 'button', className: 'dshwt-btn dshwt-btn-primary', disabled: loadingMeta || submitting || meta === null, onClick: () => void submit() },
+                submitting ? t('panel.act.busy') : t('modal.handoff.submit')))))
+    }
+
+    function WorktreeOverlays() {
       const { t } = useLocale()
       const drawer = useLogDrawerState()
       const applyTarget = useApplyModalState()
+      const handoffTarget = useHandoffModalState()
       const showDrawer = drawer.open && drawer.op !== null
-      if (!showDrawer && applyTarget === null) return null
+      if (!showDrawer && applyTarget === null && handoffTarget === null) return null
       return h(React.Fragment, null,
         showDrawer
           ? h(LogDrawer, {
@@ -2248,6 +2485,9 @@ window.__ModuleLoader__.load({
           : null,
         applyTarget !== null
           ? h(ApplyBackflowModal, { target: applyTarget, onClose: closeApplyModal, t })
+          : null,
+        handoffTarget !== null
+          ? h(HandoffModal, { target: handoffTarget, onClose: closeHandoffModal, t })
           : null)
     }
 
@@ -3799,67 +4039,84 @@ window.__ModuleLoader__.load({
       return true
     }
 
+    /** Shared session-scoped `/session-actions` hook with strict frame-0 scope guard. */
+    function useSessionActions(ctx, props, options = {}) {
+      const sessionId = props?.sessionId ?? props?.session?.header?.id ?? props?.session?.id ?? props?.id ?? null
+      const summary = typeof props?.useSessions === 'function'
+        ? props.useSessions(state => (sessionId ? state?.byId?.[sessionId] : undefined))
+        : sessionSummaryOf(ctx, sessionId)
+      const cwd = props?.cwd ?? extractSummaryCwd(summary) ?? props?.session?.header?.cwd ?? null
+      const scopeKey = typeof sessionId === 'string' && sessionId.length > 0
+        ? `s:${sessionId}`
+        : typeof cwd === 'string' && cwd.length > 0
+          ? `c:${cwd}`
+          : null
+
+      const [entry, setEntry] = useState(null)
+      const [envTick, setEnvTick] = useState(0)
+      const onRefreshRef = useRef(options.onRefresh)
+      onRefreshRef.current = options.onRefresh
+
+      useEffect(() => {
+        const bump = () => {
+          onRefreshRef.current?.()
+          setEnvTick(n => n + 1)
+        }
+        CLIENT_STATE.envListeners.add(bump)
+        if (typeof window !== 'undefined') window.addEventListener('focus', bump)
+        return () => {
+          CLIENT_STATE.envListeners.delete(bump)
+          if (typeof window !== 'undefined') window.removeEventListener('focus', bump)
+        }
+      }, [])
+
+      useEffect(() => {
+        if (scopeKey === null) {
+          setEntry(null)
+          return
+        }
+        let cancelled = false
+        const params = []
+        if (typeof sessionId === 'string' && sessionId.length > 0) params.push(`sessionId=${enc(sessionId)}`)
+        if (typeof cwd === 'string' && cwd.length > 0) params.push(`cwd=${enc(cwd)}`)
+        void api(`/session-actions?${params.join('&')}`).then((value) => {
+          if (cancelled) return
+          setEntry({ scopeKey, data: value ?? null })
+        }).catch(() => {
+          // keep last known state on transient failure for the same scope
+        })
+        return () => { cancelled = true }
+      }, [scopeKey, sessionId, cwd, envTick])
+
+      const clear = useCallback(() => setEntry(null), [])
+      const refresh = useCallback(() => setEnvTick(n => n + 1), [])
+      const data = entry !== null && entry.scopeKey === scopeKey ? entry.data : null
+      return { sessionId, cwd, scopeKey, data, clear, refresh }
+    }
+
     function SessionHeaderActions(ctx) {
       return function HeaderActions(props) {
         const { t } = useLocale()
-        const sessionId = props?.sessionId ?? props?.id ?? null
+        const { sessionId, cwd, data: info, refresh } = useSessionActions(ctx, props, {
+          onRefresh: () => reconcileNativeTerminals(ctx),
+        })
         const sessionLogs = useSessionLogs(sessionId ?? GLOBAL_SESSION_KEY)
         const nativeRunning = useNativeTerminalActions(ctx, sessionId)
-        const summary = typeof props?.useSessions === 'function'
-          ? props.useSessions(state => (sessionId ? state?.byId?.[sessionId] : undefined))
-          : sessionSummaryOf(ctx, sessionId)
-        const cwd = props?.cwd ?? extractSummaryCwd(summary)
 
-        const [info, setInfo] = useState(null)
         const [selectedName, setSelectedName] = useState(null)
         const [menuOpen, setMenuOpen] = useState(false)
         const [menuPos, setMenuPos] = useState(null)
         const [starting, setStarting] = useState(false)
-        const [restoring, setRestoring] = useState(false)
         const [error, setError] = useState(null)
-        const [envTick, setEnvTick] = useState(0)
 
         const wrapRef = useRef(null)
         const menuRef = useRef(null)
-
-        useEffect(() => {
-          const bump = () => {
-            reconcileNativeTerminals(ctx)
-            setEnvTick(n => n + 1)
-          }
-          CLIENT_STATE.envListeners.add(bump)
-          if (typeof window !== 'undefined') window.addEventListener('focus', bump)
-          return () => {
-            CLIENT_STATE.envListeners.delete(bump)
-            if (typeof window !== 'undefined') window.removeEventListener('focus', bump)
-          }
-        }, [])
-
-        const refresh = useCallback(async () => {
-          if (!sessionId && !cwd) {
-            setInfo(null)
-            return
-          }
-          const params = []
-          if (typeof sessionId === 'string' && sessionId.length > 0) params.push(`sessionId=${enc(sessionId)}`)
-          if (typeof cwd === 'string' && cwd.length > 0) params.push(`cwd=${enc(cwd)}`)
-          try {
-            const value = await api(`/session-actions?${params.join('&')}`)
-            setInfo(value)
-          } catch {
-            // keep last known state on transient failure
-          }
-        }, [sessionId, cwd])
 
         // Reset transient menu/error only when switching sessions — never on window focus or refresh!
         useEffect(() => {
           setMenuOpen(false)
           setError(null)
         }, [sessionId])
-
-        useEffect(() => {
-          void refresh()
-        }, [refresh, envTick])
 
         useEffect(() => {
           if (!menuOpen) return
@@ -3890,43 +4147,8 @@ window.__ModuleLoader__.load({
 
         const actions = info?.actions ?? []
         const activeOps = info?.activeOperations ?? []
-        const archivedWorktree = info?.archivedWorktree ?? null
         const primary = actions.find(a => a.name === selectedName) ?? actions[0] ?? null
         const runningOp = activeOps.find(op => op.status === 'running') ?? null
-
-        if (archivedWorktree !== null) {
-          const restoreTip = error !== null
-            ? error
-            : archivedWorktree.hasSnapshot
-              ? t('header.restore.tipSnapshot', { branch: archivedWorktree.branch })
-              : t('header.restore.tipPlain', { branch: archivedWorktree.branch })
-          const doRestore = async () => {
-            if (restoring) return
-            setRestoring(true)
-            setError(null)
-            try {
-              await api(`/worktrees/${enc(archivedWorktree.id)}/restore`, { method: 'POST', body: JSON.stringify({}) })
-              notifyEnvChanged()
-              await refresh()
-            } catch (err) {
-              setError(err.message)
-            } finally {
-              setRestoring(false)
-            }
-          }
-          return h('div', { className: 'dshwt-hdr-wrap', ref: wrapRef },
-            h(Hint, { label: restoreTip, side: 'bottom' },
-              h('button', {
-                type: 'button',
-                className: `dshwt-hdr-btn dshwt-hdr-restore ${restoring ? 'dshwt-spin' : ''}`,
-                disabled: restoring,
-                title: hasNativeTooltip ? undefined : restoreTip,
-                'aria-label': restoreTip,
-                onClick: () => void doRestore(),
-              },
-              h(RestoreIcon, { size: 15 }),
-              h('span', { className: 'dshwt-hdr-label' }, restoring ? t('header.restore.restoring') : t('header.restore.label')))))
-        }
 
         if (actions.length === 0) return null
 
@@ -4113,25 +4335,67 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** ---- session menu rows ---- */
-    async function sendToSession(ctx, sessionId, text) {
-      const sessions = ctx.get('sessions')
-      const binding = sessions?.binding?.(sessionId)
-      if (typeof binding?.prompt === 'function') {
-        return await binding.prompt(text)
+    /** ---- Session-scoped archived worktree restore banner (`conversation.input.dock`) ---- */
+    function ArchivedWorktreeBanner(ctx) {
+      return function RestoreBanner(props) {
+        const { t } = useLocale()
+        const { sessionId, scopeKey, data, clear } = useSessionActions(ctx, props)
+        const [restoringScope, setRestoringScope] = useState(null)
+        const [errorState, setErrorState] = useState(null)
+        const activeScopeRef = useRef(scopeKey)
+        activeScopeRef.current = scopeKey
+
+        const archived = data?.archivedWorktree ?? null
+        if (archived === null) return null
+
+        const restoring = restoringScope !== null && restoringScope === scopeKey
+        const error = errorState !== null && errorState.scopeKey === scopeKey ? errorState.message : null
+
+        const doRestore = async () => {
+          if (restoring || scopeKey === null) return
+          const targetScopeKey = scopeKey
+          setRestoringScope(targetScopeKey)
+          setErrorState(prev => (prev?.scopeKey === targetScopeKey ? null : prev))
+          try {
+            await api(`/worktrees/${enc(archived.id)}/restore`, {
+              method: 'POST',
+              body: JSON.stringify({ sessionId: sessionId ?? undefined }),
+            })
+            if (activeScopeRef.current === targetScopeKey) clear()
+            notifyEnvChanged()
+          } catch (err) {
+            if (activeScopeRef.current === targetScopeKey) {
+              setErrorState({ scopeKey: targetScopeKey, message: err.message })
+            }
+          } finally {
+            setRestoringScope(prev => (prev === targetScopeKey ? null : prev))
+          }
+        }
+
+        return h('div', { className: 'dshwt-restore-dock', role: 'region', 'aria-label': t('banner.restore.title', { branch: archived.branch }) },
+          h('div', { className: 'dshwt-restore-panel' },
+            h('div', { className: 'dshwt-restore-main' },
+              h('span', { className: 'dshwt-restore-ico', 'aria-hidden': true }, h(BranchIcon, { size: 16 })),
+              h('div', { className: 'dshwt-restore-copy' },
+                h('div', { className: 'dshwt-restore-title-row' },
+                  h('span', { className: 'dshwt-restore-title' }, t('banner.restore.title', { branch: archived.branch })),
+                  archived.hasSnapshot ? h('span', { className: 'dshwt-snap-pill' }, t('settings.archived.snapshot')) : null),
+                h('div', { className: 'dshwt-restore-desc' },
+                  archived.hasSnapshot ? t('banner.restore.descSnapshot') : t('banner.restore.descPlain')),
+                error !== null ? h('div', { className: 'dshwt-restore-err', role: 'alert' }, error) : null)),
+            h('div', { className: 'dshwt-restore-act' },
+              h('button', {
+                type: 'button',
+                className: `dshwt-btn dshwt-btn-sm dshwt-btn-primary ${restoring ? 'dshwt-spin' : ''}`,
+                disabled: restoring,
+                onClick: () => void doRestore(),
+              },
+              h(RestoreIcon, { size: 14 }),
+              restoring ? t('banner.restore.restoring') : t('banner.restore.button')))))
       }
-      const scope = sessions?.scope?.(sessionId)
-      const conversation = scope?.get?.('conversation')
-      if (typeof conversation?.send === 'function') {
-        return await conversation.send(text)
-      }
-      const remoteSession = ctx.get('remote.session')
-      if (typeof remoteSession?.prompt === 'function') {
-        return await remoteSession.prompt({ sessionId, prompt: text })
-      }
-      throw new Error('session conversation unavailable')
     }
 
+    /** ---- session menu rows ---- */
     function sessionCwdOf(ctx, sessionId) {
       return extractSummaryCwd(sessionSummaryOf(ctx, sessionId))
     }
@@ -4176,12 +4440,16 @@ window.__ModuleLoader__.load({
               setArchivedId(null)
               return
             }
-            const archivedMatch = items.find(item =>
-              item.status === 'archived' && (
-                item.createdSessionId === sessionId
+            let archivedMatch = null
+            for (const item of items) {
+              if (item.status !== 'archived') continue
+              const matches = item.createdSessionId === sessionId
+                || (Array.isArray(item.sessionIds) && item.sessionIds.includes(sessionId))
                 || (typeof cwd === 'string' && (cwd === item.path || cwd.startsWith(`${item.path}/`)))
-              ),
-            )
+              if (matches && (archivedMatch === null || (item.archivedAt ?? 0) > (archivedMatch.archivedAt ?? 0))) {
+                archivedMatch = item
+              }
+            }
             if (archivedMatch) {
               setWorktreeState('archived')
               setActiveWorktree(null)
@@ -4199,12 +4467,10 @@ window.__ModuleLoader__.load({
           if (typeof menuState?.[1] === 'function') menuState[1](false)
           else props.hookContext?.[1]?.(false)
         }
-        const send = (command, noteOk) => {
-          if (typeof sessionId !== 'string') return
-          void sendToSession(ctx, sessionId, command).then(
-            () => { setSent(noteOk); close() },
-            () => setSent(t('menu.sendFailed')),
-          )
+        const openHandoff = () => {
+          const cwd = props.cwd ?? sessionCwdOf(ctx, sessionId)
+          close()
+          openHandoffModal({ sessionId: typeof sessionId === 'string' ? sessionId : null, cwd: cwd ?? null })
         }
         const openApply = () => {
           const target = activeWorktree ?? (() => {
@@ -4214,20 +4480,21 @@ window.__ModuleLoader__.load({
           if (target !== null) {
             close()
             openApplyModal(target)
-            return
           }
-          send('/worktree apply-patch', t('menu.sending'))
         }
         const restoreArchived = () => {
           if (typeof archivedId !== 'string') return
-          void api(`/worktrees/${enc(archivedId)}/restore`, { method: 'POST', body: JSON.stringify({}) }).then(
+          void api(`/worktrees/${enc(archivedId)}/restore`, {
+            method: 'POST',
+            body: JSON.stringify({ sessionId: typeof sessionId === 'string' ? sessionId : undefined }),
+          }).then(
             () => { notifyEnvChanged(); close() },
             () => setSent(t('menu.sendFailed')),
           )
         }
         const rows = []
         if (worktreeState === 'none') {
-          rows.push({ key: 'handoff', label: t('menu.handoff'), onClick: () => send('/worktree handoff', t('menu.sending')) })
+          rows.push({ key: 'handoff', label: t('menu.handoff'), onClick: openHandoff })
         } else if (worktreeState === 'active') {
           rows.push({ key: 'apply', label: t('menu.apply'), onClick: openApply })
         } else if (worktreeState === 'archived' && archivedId !== null) {
@@ -4254,6 +4521,8 @@ window.__ModuleLoader__.load({
       drawerListeners: new Set(),
       applyModal: null,
       applyModalListeners: new Set(),
+      handoffModal: null,
+      handoffModalListeners: new Set(),
       sessionLogs: new Map(),
       rightLogTabRegistered: false,
       nativeTerminals: new Map(),
@@ -4470,26 +4739,35 @@ window.__ModuleLoader__.load({
       return state
     }
 
-    function openApplyModal(target) {
-      CLIENT_STATE.applyModal = target ? { id: target.id, branch: target.branch ?? null } : null
-      for (const listener of [...CLIENT_STATE.applyModalListeners]) {
-        try { listener(CLIENT_STATE.applyModal) } catch { /* ignore */ }
+    function createModalStore(stateKey, listenersKey, normalize) {
+      const open = (target) => {
+        CLIENT_STATE[stateKey] = target ? normalize(target) : null
+        for (const listener of [...CLIENT_STATE[listenersKey]]) {
+          try { listener(CLIENT_STATE[stateKey]) } catch { /* ignore */ }
+        }
       }
+      const close = () => open(null)
+      const useModalState = () => {
+        const [state, setState] = useState(() => CLIENT_STATE[stateKey])
+        useEffect(() => {
+          setState(CLIENT_STATE[stateKey])
+          CLIENT_STATE[listenersKey].add(setState)
+          return () => { CLIENT_STATE[listenersKey].delete(setState) }
+        }, [])
+        return state
+      }
+      return { open, close, useModalState }
     }
 
-    function closeApplyModal() {
-      openApplyModal(null)
-    }
+    const applyModalStore = createModalStore('applyModal', 'applyModalListeners', target => ({ id: target.id, branch: target.branch ?? null }))
+    const openApplyModal = applyModalStore.open
+    const closeApplyModal = applyModalStore.close
+    const useApplyModalState = applyModalStore.useModalState
 
-    function useApplyModalState() {
-      const [state, setState] = useState(() => CLIENT_STATE.applyModal)
-      useEffect(() => {
-        setState(CLIENT_STATE.applyModal)
-        CLIENT_STATE.applyModalListeners.add(setState)
-        return () => { CLIENT_STATE.applyModalListeners.delete(setState) }
-      }, [])
-      return state
-    }
+    const handoffModalStore = createModalStore('handoffModal', 'handoffModalListeners', target => ({ sessionId: target.sessionId ?? null, cwd: target.cwd ?? null }))
+    const openHandoffModal = handoffModalStore.open
+    const closeHandoffModal = handoffModalStore.close
+    const useHandoffModalState = handoffModalStore.useModalState
 
     function normalizeLang(tag) {
       if (typeof tag !== 'string' || tag.trim().length === 0) return null
@@ -4651,6 +4929,13 @@ window.__ModuleLoader__.load({
           locale: NS,
         }, SessionHeaderActions(ctx))), 'dsh-worktree-env: header actions'))
 
+        disposers.push(ctx.effect(() => ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+          name: 'conversation.input.dock',
+          id: 'dsh-worktree-env-restore',
+          order: 15,
+          locale: NS,
+        }, ArchivedWorktreeBanner(ctx))), 'dsh-worktree-env: restore banner'))
+
         // On-demand right-sidebar log tab: omits `guide` so it stays off the sidebar launcher
         // and only opens when the user runs an action (or views logs) from the top bar.
         const mountRightLogTab = (scope) => {
@@ -4707,13 +4992,14 @@ window.__ModuleLoader__.load({
         }
         disposers.push(() => clearAllNativeTerminals())
         disposers.push(() => closeApplyModal())
+        disposers.push(() => closeHandoffModal())
 
         disposers.push(ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay',
           id: 'dsh-worktree-env-logs',
           order: 60,
           locale: NS,
-        }, LogDrawerOverlay)), 'dsh-worktree-env: log overlay'))
+        }, WorktreeOverlays)), 'dsh-worktree-env: overlays'))
 
         disposers.push(ctx.effect(() => ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
           name: 'sidebar.workspaces.session.menu.item', id: 'dsh-worktree-env-menu', order: 350, locale: NS,

@@ -373,10 +373,22 @@ test('handleSessionArchived snapshots dirty worktree, reopened session auto-dete
     assert.equal(reopened.archivedWorktree.branch, 'feat-snap')
     assert.equal(reopened.archivedWorktree.hasSnapshot, true)
 
-    // Restoring recovers both edited and untracked files, removes consumed snapshot ref, and restores actions
-    const restored = await coldService.restore(wtPath, undefined, undefined, { runSetup: false })
+    // When DSH falls back cwd of the unarchived session to the existing repo root (`dir`),
+    // sessionActions must STILL detect the archived worktree for `sess-old-1`, without leaking to unrelated sessions!
+    const reopenedFallbackRoot = await coldService.sessionActions('sess-old-1', dir)
+    assert.ok(reopenedFallbackRoot.archivedWorktree, 'session whose cwd fell back to repo root should still detect its archived worktree')
+    assert.equal(reopenedFallbackRoot.archivedWorktree.id, wtPath)
+    const unrelatedInSameRepo = await coldService.sessionActions('sess-other-999', dir)
+    assert.equal(unrelatedInSameRepo.archivedWorktree, null, 'unrelated session in the same repo must never see another session archived banner')
+
+    // Restoring recovers both edited and untracked files, re-points live agent cwd back into worktree, and cleans snapshot ref
+    let agentCwd = dir
+    const fakeAgent = { session: { header: { id: 'sess-old-1', cwd: dir } } }
+    coldService.ctx.workingDirectory.set = async (_a, next) => { agentCwd = next; return next }
+    const restored = await coldService.restore(wtPath, fakeAgent, undefined, { runSetup: false })
     assert.equal(restored.restored, true)
     assert.equal(restored.snapshotRestored?.applied, true)
+    assert.equal(agentCwd, wtPath, 'restore should re-point the live session workingDirectory back into the restored worktree')
     assert.equal(await readFile(join(wtPath, 'file.txt'), 'utf8'), 'wip-edit\n')
     assert.equal(await readFile(join(wtPath, 'draft.txt'), 'utf8'), 'untracked-wip\n')
 
@@ -387,6 +399,19 @@ test('handleSessionArchived snapshots dirty worktree, reopened session auto-dete
     assert.equal(activeAgain.archivedWorktree, null)
     assert.equal(activeAgain.actions.length, 1)
     assert.equal(activeAgain.actions[0].name, 'dev')
+
+    // When one session has multiple archived worktrees, fallback detection must prefer the most recently archived one
+    const olderWt = join(dir, '.agents', 'worktrees', 'feat-older')
+    const newerWt = join(dir, '.agents', 'worktrees', 'feat-newer')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-older', olderWt])
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-newer', newerWt])
+    await service.registerCreated({ path: olderWt, branch: 'feat-older', baseCommit, repositoryRoot: dir, sessionId: 'sess-multi-arch' }, { runSetup: false })
+    await service.registerCreated({ path: newerWt, branch: 'feat-newer', baseCommit, repositoryRoot: dir, sessionId: 'sess-multi-arch' }, { runSetup: false })
+    await service.archive(olderWt)
+    await new Promise(r => setTimeout(r, 15))
+    await service.archive(newerWt)
+    const picked = await coldService.sessionActions('sess-multi-arch', dir)
+    assert.equal(picked.archivedWorktree?.branch, 'feat-newer', 'expected most recently archived worktree to win')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -627,5 +652,68 @@ test('prompt dirty policy checks actual dirty git state, and server SSE avoids d
   } finally {
     await rm(dir, { recursive: true, force: true })
     await rm(nonGitDir, { recursive: true, force: true })
+  }
+})
+
+test('handoffInfo and handoffForSession support both live in-place switching and idle direct creation without /worktree command', async () => {
+  const { inject: hostInject } = await import('../src/index.js')
+  assert.equal(hostInject.includes('commands'), false, 'plugin should not register a /worktree slash command')
+
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-httphandoff-')))
+  try {
+    await initRepo(dir)
+    await writeFile(join(dir, 'file.txt'), 'local-wip\n', 'utf8')
+    await writeFile(join(dir, 'extra.txt'), 'untracked-local\n', 'utf8')
+
+    // 1. Live agent session -> switches working directory in-place and carries uncommitted changes
+    let liveCwd = dir
+    const fakeAgent = { session: { header: { id: 'sess-live-ho', cwd: dir } } }
+    const ctxLive = makeCtx({ agents: { list: () => [fakeAgent] } })
+    ctxLive.workingDirectory = {
+      get: () => liveCwd,
+      ensure: async () => liveCwd,
+      set: async (_agent, next) => { liveCwd = next; return next },
+    }
+    const service = new WorktreeEnhanceService(ctxLive, normalizeConfig({ autoRunSetup: false, autoRunCleanup: false }))
+
+    const info = await service.handoffInfo('sess-live-ho', dir)
+    assert.equal(info.currentBranch, 'main')
+    assert.equal(info.dirtyCount, 2)
+    assert.equal(info.inWorktree, false)
+    assert.equal(info.hasLiveAgent, true)
+
+    await assert.rejects(
+      () => service.handoffForSession('sess-live-ho', dir, { name: 'bad..branch' }),
+      (err) => err?.code === 'INVALID_BRANCH_NAME',
+    )
+    await assert.rejects(
+      () => service.handoffForSession('sess-live-ho', dir, { name: 'main' }),
+      (err) => err?.code === 'BRANCH_ALREADY_EXISTS',
+    )
+
+    const liveRes = await service.handoffForSession('sess-live-ho', dir, { name: 'feat-live-ho', carryChanges: true })
+    assert.equal(liveRes.switchedInPlace, true)
+    assert.equal(liveRes.carriedFiles, 2)
+    assert.equal(liveCwd, liveRes.created.path)
+    assert.equal(await readFile(join(liveRes.created.path, 'file.txt'), 'utf8'), 'local-wip\n')
+    assert.equal(await readFile(join(liveRes.created.path, 'extra.txt'), 'utf8'), 'untracked-local\n')
+
+    // 2. Idle session (no mounted live agent) -> creates worktree directly with carried changes,
+    //    and leaves createdSessionId null so the untouched local session is never bound to the new worktree
+    const idleService = new WorktreeEnhanceService(makeCtx({ workspaceRegistry: { list: () => [{ path: dir }], pinnedSessionIds: [] } }), normalizeConfig({ autoRunSetup: false, autoRunCleanup: false }))
+    const idleRes = await idleService.handoffForSession('sess-idle-ho', dir, { name: 'feat-idle-ho', carryChanges: true })
+    assert.equal(idleRes.switchedInPlace, false)
+    assert.equal(idleRes.carriedFiles, 2)
+    assert.equal(idleRes.record.createdSessionId, null, 'idle handoff must not bind the untouched local session ID to the new worktree')
+    assert.equal(await readFile(join(idleRes.created.path, 'file.txt'), 'utf8'), 'local-wip\n')
+    assert.equal(await readFile(join(idleRes.created.path, 'extra.txt'), 'utf8'), 'untracked-local\n')
+
+    const archivedOnOldLocal = await idleService.handleSessionArchived('sess-idle-ho')
+    assert.equal(archivedOnOldLocal.archived, 0, 'archiving the old local session must never archive the new worktree')
+    await idleService.archive(idleRes.created.path)
+    const oldLocalActions = await idleService.sessionActions('sess-idle-ho', dir)
+    assert.equal(oldLocalActions.archivedWorktree, null, 'archiving the new worktree must never surface a restore banner on the old local session')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
   }
 })

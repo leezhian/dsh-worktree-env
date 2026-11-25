@@ -32,10 +32,11 @@ to direct Git commands if the experimental worktree service is disabled.
   session is unarchived), writes a hidden snapshot ref
   (`refs/dsh-worktree-env/snapshots/…`) so the checkout can be removed while
   keeping uncommitted work losslessly recoverable. Reopening an archived
-  worktree session auto-surfaces a one-click **Restore worktree** button (and
-  removes the consumed snapshot ref once losslessly restored). Directories
-  containing initialized submodules or nested repositories are never
-  auto-destroyed.
+  worktree session auto-surfaces a session-scoped floating **Restore worktree**
+  banner above the composer (`conversation.input.dock`, never bleeding into
+  other sessions) and removes the consumed snapshot ref once losslessly
+  restored. Directories containing initialized submodules or nested
+  repositories are never auto-destroyed.
 - **Quota cleanup** — keeps at most `keepCount` (default `15`) active worktrees
   per repository, oldest-accessed first, while protecting worktrees used by
   pinned sessions, active sessions, or running setup/action processes.
@@ -50,11 +51,12 @@ to direct Git commands if the experimental worktree service is disabled.
   collapsible DSH-only managed worktrees list with manual **Run setup** live
   logs, and a collapsible **Archived worktrees** list for one-click restore or
   permanent purge) and **Environments** (project list, read-only preview with
-  available variables, and visual `.toml` editor), plus **conversation top-bar
-  quick actions / restore button** (preferring DSH's native interactive terminal
-  when enabled, falling back to an on-demand right-sidebar log tab or floating
-  drawer) and session menu items (**Handoff**, **Apply changes** modal, or
-  **Restore worktree**). All UI copy follows DSH's active language in real time.
+  available variables, and visual `.toml` editor), **conversation top-bar quick
+  actions** (preferring DSH's native interactive terminal when enabled, falling
+  back to an on-demand right-sidebar log tab or floating drawer), a
+  session-scoped floating **Restore worktree** dock banner above the composer,
+  and session menu modals (**Handoff**, **Apply changes**, or **Restore
+  worktree**). All UI copy follows DSH's active language in real time.
 
 ## Configuration
 

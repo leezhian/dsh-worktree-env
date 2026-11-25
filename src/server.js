@@ -27,8 +27,28 @@ export function registerServer(ctx, service) {
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/config`, handler: (req, res) => guard(res, () => configRoute(req, res, service)) }), 'dsh-worktree-env: config route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/session-actions`, handler: (req, res) => guard(res, () => sessionActionsRoute(req, res, service)) }), 'dsh-worktree-env: session actions route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/actions/run`, handler: (req, res) => guard(res, () => runActionRoute(req, res, service)) }), 'dsh-worktree-env: run action route'),
+    ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/sessions/handoff-info`, handler: (req, res) => guard(res, () => handoffInfoRoute(req, res, service)) }), 'dsh-worktree-env: handoff info route'),
+    ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/sessions/handoff`, handler: (req, res) => guard(res, () => handoffSessionRoute(req, res, service)) }), 'dsh-worktree-env: handoff route'),
   ]
   return () => { for (const dispose of disposers) dispose() }
+}
+
+async function handoffInfoRoute(req, res, service) {
+  requireMethod(req, 'GET')
+  const url = new URL(req.url ?? '/', 'http://local')
+  const sessionId = url.searchParams.get('sessionId') ?? undefined
+  const cwd = url.searchParams.get('cwd') ?? undefined
+  json(res, await service.handoffInfo(sessionId, cwd))
+}
+
+async function handoffSessionRoute(req, res, service) {
+  requireMethod(req, 'POST')
+  const body = await readBody(req)
+  if (body === null || typeof body !== 'object') throw httpError(400, 'JSON object body required')
+  json(res, await service.handoffForSession(body.sessionId, body.cwd, {
+    name: typeof body.name === 'string' ? body.name : undefined,
+    carryChanges: body.carryChanges !== false,
+  }))
 }
 
 async function quotaRoute(req, res, service) {
@@ -157,12 +177,13 @@ async function worktreeAction(req, res, service) {
   }
   if (action === 'restore') {
     requireMethod(req, 'POST')
-    json(res, await service.restore(id, undefined))
+    const liveAgent = service.findLiveAgent(typeof body?.sessionId === 'string' ? body.sessionId : null)
+    json(res, await service.restore(id, liveAgent ?? undefined))
     return
   }
   if (action === 'handoff') {
     requireMethod(req, 'POST')
-    throw httpError(400, 'handoff runs inside a session; use the worktree_handoff tool or the session menu')
+    throw httpError(400, 'use POST /sessions/handoff or the worktree_handoff tool')
   }
   throw httpError(404, `unknown worktree action "${action}"`)
 }

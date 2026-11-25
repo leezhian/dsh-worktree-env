@@ -15,7 +15,7 @@ import { GitRunner, parseWorktreeList, repoInfo } from './git.js'
 import { classifyManagedEnvPath, discoverEnvConfig, listEnvConfigs, parseGitRemoteOwner, preferredConfigPath, readEnvConfigFile, writeEnvConfig } from './env-config.js'
 import { EnvRunner } from './env-runner.js'
 import { detectApplyConflicts, fetchUpstream, packageWorkingTree } from './transfer.js'
-import { executeBackflow, inspectBackflowInfo, sourceCheckoutStatus } from './backflow.js'
+import { executeBackflow, inspectBackflowInfo, sourceCheckoutStatus, validateNewBranchName } from './backflow.js'
 import { deleteSnapshot, directorySize, isClean, nestedRepositoryFindings, restoreSnapshot, writeSnapshot } from './snapshot.js'
 import { storeOf } from './store.js'
 
@@ -327,21 +327,16 @@ export class WorktreeEnhanceService {
    * @returns {string | null}
    */
   sessionDirectory(sessionId, fallbackCwd) {
-    if (typeof sessionId === 'string' && sessionId.length > 0) {
-      const agents = this.ctx.get('agents')
-      if (agents !== undefined && typeof agents.list === 'function') {
-        for (const agent of agents.list()) {
-          if (agent.session?.header?.id !== sessionId) continue
-          try {
-            const cwd = this.ctx.workingDirectory.get(agent.session)
-            if (typeof cwd === 'string' && cwd.length > 0) return resolve(cwd)
-          } catch {
-            // fall through to session header
-          }
-          if (typeof agent.session?.header?.cwd === 'string' && agent.session.header.cwd.length > 0) {
-            return resolve(agent.session.header.cwd)
-          }
-        }
+    const agent = this.findLiveAgent(sessionId)
+    if (agent !== null) {
+      try {
+        const cwd = this.ctx.workingDirectory.get(agent.session)
+        if (typeof cwd === 'string' && cwd.length > 0) return resolve(cwd)
+      } catch {
+        // fall through to session header
+      }
+      if (typeof agent.session?.header?.cwd === 'string' && agent.session.header.cwd.length > 0) {
+        return resolve(agent.session.header.cwd)
       }
     }
     if (typeof fallbackCwd === 'string' && fallbackCwd.trim().length > 0) {
@@ -372,12 +367,14 @@ export class WorktreeEnhanceService {
 
   /**
    * Look up an archived worktree record associated with a session (by its
-   * last working directory or recorded `createdSessionId`).
+   * last working directory or recorded `createdSessionId` / `sessionIds`).
    * @param {string | null | undefined} sessionId
-   * @param {string | null} dir
+   * @param {string | null} dir - path to match (when `matchPath` is true) and/or discover the enclosing repo.
+   * @param {{ matchPath?: boolean }} [options]
    * @returns {Promise<import('./store.js').WorktreeRecord | null>}
    */
-  async findArchivedWorktree(sessionId, dir) {
+  async findArchivedWorktree(sessionId, dir, options = {}) {
+    const matchPath = options.matchPath !== false
     const candidates = new Set(this.commonDirs)
     if (typeof dir === 'string' && dir.length > 0) {
       const info = await this.findRepoInfoAscending(dir)
@@ -412,21 +409,51 @@ export class WorktreeEnhanceService {
           }
         }
         if (!isArchived) continue
-        if (typeof dir === 'string' && dir.length > 0 && (record.path === dir || dir.startsWith(`${record.path}/`))) {
+        if (matchPath && typeof dir === 'string' && dir.length > 0 && (record.path === dir || dir.startsWith(`${record.path}/`))) {
           return record
         }
-        if (sessionMatch === null && typeof sessionId === 'string' && sessionId.length > 0 && record.createdSessionId === sessionId) {
-          sessionMatch = record
+        if (typeof sessionId === 'string' && sessionId.length > 0) {
+          const matchesSession = record.createdSessionId === sessionId
+            || (Array.isArray(record.sessionIds) && record.sessionIds.includes(sessionId))
+          if (matchesSession && (sessionMatch === null || (record.archivedAt ?? 0) > (sessionMatch.archivedAt ?? 0))) {
+            sessionMatch = record
+          }
         }
       }
     }
     return sessionMatch
   }
 
+  /** Shape a `sessionActions` response for an archived worktree record. */
+  _archivedSessionActionResult(cwd, archived) {
+    return {
+      cwd,
+      repositoryRoot: archived.repositoryRoot,
+      branch: archived.branch,
+      inWorktree: true,
+      worktreeId: archived.id,
+      archivedWorktree: {
+        id: archived.id,
+        path: archived.path,
+        branch: archived.branch,
+        repositoryRoot: archived.repositoryRoot,
+        hasSnapshot: typeof archived.snapshotRef === 'string' && archived.snapshotRef.length > 0,
+        archivedAt: archived.archivedAt ?? null,
+      },
+      envName: null,
+      envSourcePath: null,
+      envFile: null,
+      actions: [],
+      activeOperations: [],
+    }
+  }
+
   /**
    * Describe quick actions available for one session (works in both managed
    * worktrees and regular local project checkouts, and surfaces archived
-   * worktrees so reopened sessions can offer one-click restoration).
+   * worktrees so reopened sessions can offer one-click restoration — including
+   * when DSH's working-directory service falls back to the main repository root
+   * after the worktree directory was removed).
    * @param {string | null | undefined} sessionId
    * @param {string | null | undefined} fallbackCwd
    */
@@ -434,29 +461,8 @@ export class WorktreeEnhanceService {
     const dir = this.sessionDirectory(sessionId, fallbackCwd)
     const exists = dir !== null && await access(dir, constants.F_OK).then(() => true, () => false)
     if (dir === null || !exists) {
-      const archived = await this.findArchivedWorktree(sessionId, dir)
-      if (archived !== null) {
-        return {
-          cwd: dir ?? archived.path,
-          repositoryRoot: archived.repositoryRoot,
-          branch: archived.branch,
-          inWorktree: true,
-          worktreeId: archived.id,
-          archivedWorktree: {
-            id: archived.id,
-            path: archived.path,
-            branch: archived.branch,
-            repositoryRoot: archived.repositoryRoot,
-            hasSnapshot: typeof archived.snapshotRef === 'string' && archived.snapshotRef.length > 0,
-            archivedAt: archived.archivedAt ?? null,
-          },
-          envName: null,
-          envSourcePath: null,
-          envFile: null,
-          actions: [],
-          activeOperations: [],
-        }
-      }
+      const archived = await this.findArchivedWorktree(sessionId, dir, { matchPath: true })
+      if (archived !== null) return this._archivedSessionActionResult(dir ?? archived.path, archived)
       return {
         cwd: dir, repositoryRoot: null, branch: null, inWorktree: false, worktreeId: null, archivedWorktree: null,
         envName: null, envSourcePath: null, envFile: null, actions: [], activeOperations: [],
@@ -464,6 +470,14 @@ export class WorktreeEnhanceService {
     }
     const info = await repoInfo(this.git, dir)
     const covering = this.coveringWorktree(dir)
+    // When DSH unarchives a worktree session whose checkout directory was removed,
+    // DSH's working-directory service falls back `cwd` to the existing repository
+    // root (`exists === true`, `covering === null`). Detect the archived worktree
+    // by `sessionId` so the session still surfaces its one-click Restore banner.
+    if (covering === null && typeof sessionId === 'string' && sessionId.length > 0) {
+      const archived = await this.findArchivedWorktree(sessionId, dir, { matchPath: false })
+      if (archived !== null) return this._archivedSessionActionResult(archived.path, archived)
+    }
     if (covering !== null) {
       void this.touchWorktreeAccess(dir, sessionId)
     }
@@ -552,22 +566,77 @@ export class WorktreeEnhanceService {
   }
 
   /**
-   * Handoff: move the calling session into a new worktree, optionally carrying
-   * the current checkout's uncommitted changes and refreshing the upstream.
-   * @param {import('@deepseek-ai/dsh-agent').Agent} agent - calling agent.
-   * @param {{ name?: string, from?: string, carryChanges?: boolean, fetch?: boolean, runSetup?: boolean }} [options]
-   * @param {AbortSignal} [signal] - cancellation.
+   * Find the live mounted agent for a given session id, if currently loaded.
+   * @param {string | null | undefined} sessionId
    */
-  async handoff(agent, options = {}, signal) {
-    const cwd = await this.ctx.workingDirectory.ensure(agent, signal)
-    const info = await repoInfo(this.git, cwd)
-    if (info === null) throw new Error(`not a git repository: ${cwd}`)
-    const root = info.root
-    const sessionId = agent?.session?.header?.id
+  findLiveAgent(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+    const agents = this.ctx.get('agents')
+    if (agents === undefined || typeof agents.list !== 'function') return null
+    for (const agent of agents.list()) {
+      if (agent.session?.header?.id === sessionId) return agent
+    }
+    return null
+  }
+
+  /**
+   * Resolve a session's directory and enclosing Git repository, throwing a 400
+   * HTTP-annotated error if unavailable or outside Git.
+   * @param {string | null | undefined} sessionId
+   * @param {string | null | undefined} fallbackCwd
+   */
+  async _resolveSessionRepo(sessionId, fallbackCwd) {
+    const dir = this.sessionDirectory(sessionId, fallbackCwd)
+    if (dir === null) {
+      const err = new Error('session directory unavailable')
+      err.status = 400
+      throw err
+    }
+    const info = await repoInfo(this.git, dir)
+    if (info === null) {
+      const err = new Error(`not a git repository: ${dir}`)
+      err.status = 400
+      throw err
+    }
+    return { dir, info }
+  }
+
+  /**
+   * Create a worktree directly with Git under `<root>/<worktreeDirectory>/<branch>`.
+   * @param {string} root
+   * @param {{ name?: string, from?: string, suffix?: string }} request
+   * @param {AbortSignal} [signal]
+   */
+  async _createDirectWorktree(root, request, signal) {
+    const suffix = request.suffix || 'wt'
+    const branch = request.name ?? `dsh-${suffix}-${Date.now().toString(36)}`
+    const revision = request.from ?? 'HEAD'
+    const baseCommit = (await this.git.check(root, ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`], { signal })).trim()
+    const relDir = this.worktreeDirectoryState().worktreeDirectory || DEFAULT_WORKTREE_DIRECTORY
+    const wtPath = join(root, ...relDir.split('/'), branch)
+    await mkdir(dirname(wtPath), { recursive: true })
+    await this.git.check(root, ['worktree', 'add', '-b', branch, '--', wtPath, baseCommit], { signal })
+    return { path: wtPath, branch, baseCommit, repositoryRoot: root }
+  }
+
+  /**
+   * Shared serialized handoff pipeline used by both live-agent `handoff()` and
+   * idle-session `handoffForSession()`.
+   * @param {{
+   *   root: string,
+   *   commonDir: string,
+   *   options: { name?: string, from?: string, carryChanges?: boolean, fetch?: boolean, runSetup?: boolean },
+   *   createCheckout: () => Promise<{ path: string, branch: string, baseCommit: string, repositoryRoot: string }>,
+   *   recordSessionId: string | null,
+   *   pendingSessionId?: string | null,
+   *   signal?: AbortSignal,
+   * }} params
+   */
+  async _runHandoffPipeline({ root, commonDir, options, createCheckout, recordSessionId, pendingSessionId = null, signal }) {
     const operation = this.runner.begin('handoff', options.name ?? 'handoff', root)
-    return await this.git.serialized(info.commonDir, async () => {
-      if (typeof sessionId === 'string' && sessionId.length > 0) {
-        this.pendingHandoffSessions.add(sessionId)
+    return await this.git.serialized(commonDir, async () => {
+      if (typeof pendingSessionId === 'string' && pendingSessionId.length > 0) {
+        this.pendingHandoffSessions.add(pendingSessionId)
       }
       try {
         let patch = null
@@ -584,11 +653,11 @@ export class WorktreeEnhanceService {
           carriedFiles = packaged.fileCount
           this.runner.log(operation, 'meta', `Packaged ${carriedFiles} changed file(s).\n`)
         }
-        const created = await this.createWorktree(agent, { name: options.name, from: options.from }, signal)
+        const created = await createCheckout()
         this.runner.log(operation, 'meta', `Created worktree ${created.branch} at ${created.path}\n`)
         if (patch !== null) {
-          const dir = await mkdtemp(join(tmpdir(), 'dsh-wt-apply-'))
-          const file = join(dir, 'handoff.patch')
+          const tmp = await mkdtemp(join(tmpdir(), 'dsh-wt-apply-'))
+          const file = join(tmp, 'handoff.patch')
           try {
             await writeFile(file, patch, 'utf8')
             const result = await this.git.run(created.path, ['apply', '--3way', '--', file], { allowedExitCodes: [0, 1], signal })
@@ -599,11 +668,11 @@ export class WorktreeEnhanceService {
               this.runner.log(operation, 'meta', 'Carried changes applied inside the worktree.\n')
             }
           } finally {
-            await rm(dir, { recursive: true, force: true }).catch(() => {})
+            await rm(tmp, { recursive: true, force: true }).catch(() => {})
           }
         }
         const record = await this.registerCreated(
-          { ...created, sessionId },
+          { ...created, sessionId: recordSessionId },
           options.runSetup !== undefined ? { runSetup: options.runSetup } : {},
         )
         this.runner.finish(operation, conflicts.length > 0 ? 'failed' : 'succeeded')
@@ -612,10 +681,93 @@ export class WorktreeEnhanceService {
         this.runner.finish(operation, 'failed')
         throw error
       } finally {
-        if (typeof sessionId === 'string' && sessionId.length > 0) {
-          this.pendingHandoffSessions.delete(sessionId)
+        if (typeof pendingSessionId === 'string' && pendingSessionId.length > 0) {
+          this.pendingHandoffSessions.delete(pendingSessionId)
         }
       }
+    })
+  }
+
+  /**
+   * Inspect a session's local checkout before running a UI-triggered handoff
+   * into a new worktree.
+   * @param {string | null | undefined} sessionId
+   * @param {string | null | undefined} fallbackCwd
+   * @param {AbortSignal} [signal]
+   */
+  async handoffInfo(sessionId, fallbackCwd, signal) {
+    const { dir, info } = await this._resolveSessionRepo(sessionId, fallbackCwd)
+    const status = await this.sourceCheckoutStatus(info.root, signal)
+    return {
+      cwd: dir,
+      repositoryRoot: info.root,
+      currentBranch: status.currentBranch,
+      dirtyCount: status.sourceDirtyCount,
+      inWorktree: this.coveringWorktree(dir) !== null,
+      hasLiveAgent: this.findLiveAgent(sessionId) !== null,
+    }
+  }
+
+  /**
+   * Handoff triggered from the Web UI (HTTP endpoint): uses the live agent to
+   * switch the session in-place when loaded, or creates the worktree directly
+   * with carried uncommitted changes so the client can open a new session in it.
+   * Idle-session handoffs leave `createdSessionId: null` so the untouched local
+   * session is never falsely bound to the newly created worktree.
+   * @param {string | null | undefined} sessionId
+   * @param {string | null | undefined} fallbackCwd
+   * @param {{ name?: string, from?: string, carryChanges?: boolean, fetch?: boolean, runSetup?: boolean }} [options]
+   * @param {AbortSignal} [signal]
+   */
+  async handoffForSession(sessionId, fallbackCwd, options = {}, signal) {
+    const cleanName = typeof options.name === 'string' && options.name.trim().length > 0 ? options.name.trim() : undefined
+    const { info } = await this._resolveSessionRepo(sessionId, fallbackCwd)
+    if (cleanName !== undefined) {
+      const validation = await validateNewBranchName(this.git, info.root, cleanName, signal)
+      if (!validation.ok) {
+        const err = new Error(validation.message)
+        err.status = validation.code === 'BRANCH_ALREADY_EXISTS' ? 409 : 400
+        err.code = validation.code
+        throw err
+      }
+    }
+    const liveAgent = this.findLiveAgent(sessionId)
+    if (liveAgent !== null) {
+      const result = await this.handoff(liveAgent, { ...options, name: cleanName }, signal)
+      return { ...result, switchedInPlace: true }
+    }
+    const suffix = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId.slice(0, 8) : 'wt'
+    const result = await this._runHandoffPipeline({
+      root: info.root,
+      commonDir: info.commonDir,
+      options: { ...options, name: cleanName },
+      createCheckout: () => this._createDirectWorktree(info.root, { name: cleanName, from: options.from, suffix }, signal),
+      recordSessionId: null,
+      signal,
+    })
+    return { ...result, switchedInPlace: false }
+  }
+
+  /**
+   * Handoff: move the calling session into a new worktree, optionally carrying
+   * the current checkout's uncommitted changes and refreshing the upstream.
+   * @param {import('@deepseek-ai/dsh-agent').Agent} agent - calling agent.
+   * @param {{ name?: string, from?: string, carryChanges?: boolean, fetch?: boolean, runSetup?: boolean }} [options]
+   * @param {AbortSignal} [signal] - cancellation.
+   */
+  async handoff(agent, options = {}, signal) {
+    const cwd = await this.ctx.workingDirectory.ensure(agent, signal)
+    const info = await repoInfo(this.git, cwd)
+    if (info === null) throw new Error(`not a git repository: ${cwd}`)
+    const sessionId = agent?.session?.header?.id ?? null
+    return await this._runHandoffPipeline({
+      root: info.root,
+      commonDir: info.commonDir,
+      options,
+      createCheckout: () => this.createWorktree(agent, { name: options.name, from: options.from }, signal),
+      recordSessionId: sessionId,
+      pendingSessionId: sessionId,
+      signal,
     })
   }
 
@@ -734,17 +886,13 @@ export class WorktreeEnhanceService {
     const cwd = await this.ctx.workingDirectory.ensure(agent, signal)
     const info = await repoInfo(this.git, cwd)
     if (info === null) throw new Error(`not a git repository: ${cwd}`)
-    const branch = request.name ?? `dsh-${agent.session.header.id.slice(0, 8)}-${Date.now().toString(36)}`
-    const revision = request.from ?? 'HEAD'
-    const baseCommit = (await this.git.check(info.root, ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`], { signal })).trim()
-    const relDir = isValidRelativeWorktreeDir(this.config.worktreeDirectory)
-      ? this.config.worktreeDirectory
-      : DEFAULT_WORKTREE_DIRECTORY
-    const path = join(info.root, ...relDir.split('/'), branch)
-    await mkdir(dirname(path), { recursive: true })
-    await this.git.check(info.root, ['worktree', 'add', '-b', branch, '--', path, baseCommit], { signal })
-    const canonicalPath = await this.ctx.workingDirectory.set(agent, path, signal)
-    return { path: canonicalPath, branch, baseCommit, repositoryRoot: info.root }
+    const created = await this._createDirectWorktree(info.root, {
+      name: request.name,
+      from: request.from,
+      suffix: agent.session.header.id.slice(0, 8),
+    }, signal)
+    const canonicalPath = await this.ctx.workingDirectory.set(agent, created.path, signal)
+    return { ...created, path: canonicalPath }
   }
 
   /**
@@ -845,15 +993,28 @@ export class WorktreeEnhanceService {
     return await this.git.serialized(store.commonDir, async () => {
       const operation = this.runner.begin('restore', `${record.branch} · restore`, record.path)
       const native = this.native
+      const effectiveAgent = agent
+        ?? this.findLiveAgent(record.createdSessionId)
+        ?? (Array.isArray(record.sessionIds) ? record.sessionIds.map(sid => this.findLiveAgent(sid)).find(Boolean) : null)
+        ?? undefined
       try {
-        if (native !== undefined && agent !== undefined) {
-          await native.restore(agent, { path: record.path, branch: record.branch, baseCommit: record.baseCommit, repositoryRoot: record.repositoryRoot }, signal)
-        } else {
+        if (native !== undefined && typeof native.restore === 'function' && effectiveAgent !== undefined) {
+          try {
+            await native.restore(effectiveAgent, { path: record.path, branch: record.branch, baseCommit: record.baseCommit, repositoryRoot: record.repositoryRoot }, signal)
+          } catch {
+            // fall back to direct git worktree add below if native.restore rejects
+          }
+        }
+        const recreated = await access(record.path, constants.F_OK).then(() => true, () => false)
+        if (!recreated) {
           const existing = await this.git.run(record.repositoryRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${record.branch}`], { allowedExitCodes: [0, 1], signal })
           const args = existing.exitCode === 0
             ? ['worktree', 'add', '--', record.path, record.branch]
             : ['worktree', 'add', '-b', record.branch, '--', record.path, record.baseCommit]
           await this.git.check(record.repositoryRoot, args, { signal })
+        }
+        if (effectiveAgent !== undefined && typeof this.ctx.workingDirectory?.set === 'function') {
+          await this.ctx.workingDirectory.set(effectiveAgent, record.path, signal).catch(() => {})
         }
         let snapshotRestored = null
         let remainingSnapshotRef = null

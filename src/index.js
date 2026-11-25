@@ -1,9 +1,9 @@
 /**
  * dsh-worktree Host entry: configuration normalization, the shared
  * WorktreeEnhanceService, native-creation hooks, session-activity protection,
- * quota enforcement, the /worktree command, agent tools, prompt context,
- * shell-env contribution, and the HTTP surface. Dependency-free: everything
- * runs against the services the Loader injects.
+ * quota enforcement, agent tools, prompt context, shell-env contribution, and
+ * the HTTP surface. Dependency-free: everything runs against the services the
+ * Loader injects.
  *
  * @module
  */
@@ -60,7 +60,7 @@ async function buildConfigSchema() {
 
 export const Config = await buildConfigSchema()
 
-export const inject = ['subprocess', 'workingDirectory', 'tools', 'systemPrompt', 'webServer', 'commands', 'timer']
+export const inject = ['subprocess', 'workingDirectory', 'tools', 'systemPrompt', 'webServer', 'timer']
 
 /**
  * Mount the enhancement layer.
@@ -155,72 +155,6 @@ export function apply(ctx, rawConfig) {
 
   // Initial index build so shellEnv/prompt context answer right after startup.
   void service.listAll().catch(() => {})
-
-  // The /worktree human command: session menu rows and the panel send these.
-  ctx.effect(() => ctx.commands.register({
-    definitionId: 'dsh-worktree-env.command',
-    name: 'worktree',
-    description: 'Worktree enhancements: handoff with uncommitted changes, backflow, archiving, and snapshot restore.',
-    input: { hint: 'status | handoff [name] | apply-patch [branch|uncommitted] | restore [branch] | archive' },
-    async handler(invocation) {
-      const [verb, ...rest] = invocation.rawInput.trim().split(/\s+/)
-      try {
-        if (verb === 'handoff') {
-          const result = await service.handoff(invocation.agent, { name: rest[0] }, invocation.signal)
-          return { kind: 'success', text: `Worktree ${result.created.branch} at ${result.created.path}; carried ${result.carriedFiles} file(s).` }
-        }
-        if (verb === 'apply-patch') {
-          const cwd = await ctx.workingDirectory.ensure(invocation.agent, invocation.signal)
-          const covering = service.coveringWorktree(cwd)
-          if (covering === null) return { kind: 'error', text: 'Not inside a managed worktree.' }
-          const mode = rest[0] === 'uncommitted' ? 'uncommitted' : 'branch'
-          const precheck = await service.applyBackflow(covering.path, { mode, dryRun: true }, invocation.signal)
-          if (precheck.conflicts.length > 0) return { kind: 'error', text: `Conflicts: ${precheck.conflicts.join('; ')}` }
-          const applied = await service.applyBackflow(covering.path, { mode, dryRun: false }, invocation.signal)
-          return { kind: 'success', text: applied.message ?? 'Applied.' }
-        }
-        if (verb === 'restore') {
-          const sessionId = invocation.agent?.session?.header?.id ?? null
-          const cwd = service.sessionDirectory(sessionId, invocation.agent?.session?.header?.cwd)
-          let target = null
-          if (typeof rest[0] === 'string' && rest[0].length > 0) {
-            const { items } = await service.listAll()
-            target = items.find(i => i.status === 'archived' && (i.branch === rest[0] || i.id === rest[0])) ?? null
-          } else {
-            target = await service.findArchivedWorktree(sessionId, cwd)
-          }
-          if (target === null) return { kind: 'error', text: 'No archived worktree found to restore.' }
-          const result = await service.restore(target.id, invocation.agent, invocation.signal)
-          return {
-            kind: 'success',
-            text: `Restored ${target.branch} at ${target.path}${result.snapshotRestored?.applied ? ' with recovery snapshot.' : '.'}`,
-          }
-        }
-        if (verb === 'archive') {
-          const cwd = await ctx.workingDirectory.ensure(invocation.agent, invocation.signal)
-          const covering = service.coveringWorktree(cwd)
-          if (covering === null) return { kind: 'error', text: 'Not inside a managed worktree.' }
-          const result = await service.archive(covering.path, {}, invocation.signal)
-          return { kind: 'success', text: `Archived${result.snapshotRef ? ` with snapshot ${result.snapshotRef}` : ''}.` }
-        }
-        const cwd = await ctx.workingDirectory.ensure(invocation.agent, invocation.signal)
-        const description = await service.describeEnv(cwd)
-        const covering = service.coveringWorktree(cwd)
-        return {
-          kind: 'success',
-          text: [
-            covering === null ? 'Not inside a managed worktree.' : `Worktree: ${covering.branch} at ${covering.path}`,
-            `Repository: ${description.repository?.root ?? cwd}`,
-            `Environment: ${description.environment.sourcePath ?? 'none found'}`,
-            `Setup: ${covering !== null ? (await service.requireRecord(covering.path)).setupState : 'n/a'}`,
-            `Actions: ${description.environment.actions.map(a => a.name).join(', ') || 'none'}`,
-          ].join('\n'),
-        }
-      } catch (error) {
-        return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
-      }
-    },
-  }), 'dsh-worktree: /worktree command')
 
   const disposeTools = registerWorktreeTools(ctx, service)
   const disposePrompt = registerPromptContext(ctx, service)
