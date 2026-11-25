@@ -321,3 +321,54 @@ test('listAll scans only DSH-created worktrees and prunes foreign worktrees', as
     await rm(externalDir, { recursive: true, force: true })
   }
 })
+
+test('sessionActions and startActionForDirectory work in both regular repos and managed worktrees', async () => {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dsh-wt-sessact-')))
+  try {
+    await initRepo(dir)
+    await writeEnvConfig(join(dir, '.agents', 'environments', 'environment.toml'), {
+      name: 'DemoEnv',
+      actions: [
+        { name: 'hello', icon: 'run', command: 'echo hi-from-action', platform: null },
+      ],
+    })
+    const service = new WorktreeEnhanceService(makeCtx(), normalizeConfig({ autoRunSetup: false }))
+
+    // 1. Regular project checkout (not a worktree)
+    const localInfo = await service.sessionActions(undefined, dir)
+    assert.equal(localInfo.inWorktree, false)
+    assert.equal(localInfo.actions.length, 1)
+    assert.equal(localInfo.actions[0].name, 'hello')
+
+    const { operationId } = await service.startActionForDirectory(dir, 'hello')
+    assert.ok(operationId)
+    // Wait briefly for echo to finish
+    for (let i = 0; i < 40; i += 1) {
+      if (service.runner.get(operationId)?.status !== 'running') break
+      await new Promise(r => setTimeout(r, 25))
+    }
+    const op = service.runner.get(operationId)
+    assert.equal(op.status, 'succeeded')
+    assert.match(op.logs.map(l => l.text).join(''), /hi-from-action/)
+
+    // 2. Managed worktree resolved via live agent sessionId
+    const baseCommit = (await run('git', ['-C', dir, 'rev-parse', 'HEAD'])).stdout.trim()
+    const wtPath = join(dir, '.agents', 'worktrees', 'feat-act')
+    await run('git', ['-C', dir, 'worktree', 'add', '-q', '-b', 'feat-act', wtPath])
+    const fakeSession = { header: { id: 'sess-live-1', cwd: dir } }
+    const ctxWithAgent = makeCtx({
+      agents: { list: () => [{ session: fakeSession }] },
+    })
+    ctxWithAgent.workingDirectory.get = (s) => (s === fakeSession ? wtPath : undefined)
+    const wtService = new WorktreeEnhanceService(ctxWithAgent, normalizeConfig({ autoRunSetup: false }))
+    await wtService.registerCreated({ path: wtPath, branch: 'feat-act', baseCommit, repositoryRoot: dir, sessionId: 'sess-live-1' }, { runSetup: false })
+
+    const wtInfo = await wtService.sessionActions('sess-live-1', undefined)
+    assert.equal(wtInfo.inWorktree, true)
+    assert.equal(wtInfo.branch, 'feat-act')
+    assert.equal(wtInfo.actions.length, 1)
+    assert.equal(wtInfo.actions[0].name, 'hello')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

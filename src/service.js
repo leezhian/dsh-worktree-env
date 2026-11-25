@@ -249,6 +249,7 @@ export class WorktreeEnhanceService {
     const action = config.actions.find(entry => entry.name === actionName)
     if (action === undefined) throw new Error(`unknown action "${actionName}" for ${record.branch}`)
     const operation = this.runner.begin('action', `${record.branch} · ${action.name}`, record.path)
+    operation.actionName = action.name
     const store = await this.storeOfRecord(record)
     const env = this.scriptEnv(record)
     const captured = await store.readEnv(record.branch)
@@ -265,6 +266,154 @@ export class WorktreeEnhanceService {
       } finally {
         this.busyPaths.delete(record.path)
         await store.patch(record.id, { lastAccessedAt: Date.now() }).catch(() => {})
+      }
+    })()
+    return { operationId: operation.id }
+  }
+
+  /**
+   * Resolve the live working directory of a session (preferring the live agent's
+   * working directory over a client-provided fallback).
+   * @param {string | null | undefined} sessionId
+   * @param {string | null | undefined} fallbackCwd
+   * @returns {string | null}
+   */
+  sessionDirectory(sessionId, fallbackCwd) {
+    if (typeof sessionId === 'string' && sessionId.length > 0) {
+      const agents = this.ctx.get('agents')
+      if (agents !== undefined && typeof agents.list === 'function') {
+        for (const agent of agents.list()) {
+          if (agent.session?.header?.id !== sessionId) continue
+          try {
+            const cwd = this.ctx.workingDirectory.get(agent.session)
+            if (typeof cwd === 'string' && cwd.length > 0) return resolve(cwd)
+          } catch {
+            // fall through to session header
+          }
+          if (typeof agent.session?.header?.cwd === 'string' && agent.session.header.cwd.length > 0) {
+            return resolve(agent.session.header.cwd)
+          }
+        }
+      }
+    }
+    if (typeof fallbackCwd === 'string' && fallbackCwd.trim().length > 0) {
+      return resolve(fallbackCwd.trim())
+    }
+    return null
+  }
+
+  /**
+   * Describe quick actions available for one session (works in both managed
+   * worktrees and regular local project checkouts).
+   * @param {string | null | undefined} sessionId
+   * @param {string | null | undefined} fallbackCwd
+   */
+  async sessionActions(sessionId, fallbackCwd) {
+    const dir = this.sessionDirectory(sessionId, fallbackCwd)
+    if (dir === null) {
+      return {
+        cwd: null, repositoryRoot: null, branch: null, inWorktree: false, worktreeId: null,
+        envName: null, envSourcePath: null, actions: [], activeOperations: [],
+      }
+    }
+    const exists = await access(dir, constants.F_OK).then(() => true, () => false)
+    if (!exists) {
+      return {
+        cwd: dir, repositoryRoot: null, branch: null, inWorktree: false, worktreeId: null,
+        envName: null, envSourcePath: null, actions: [], activeOperations: [],
+      }
+    }
+    const info = await repoInfo(this.git, dir)
+    const covering = this.coveringWorktree(dir)
+    const config = info !== null
+      ? await discoverEnvConfig(this.git, dir)
+      : ((await listEnvConfigs(null, dir)).environments.find(e => e.valid)?.environment ?? {
+        sourcePath: null, name: basename(dir), actions: [],
+      })
+    let branch = covering?.branch ?? null
+    if (branch === null && info !== null) {
+      const head = await this.git.run(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowedExitCodes: [0, 128] })
+      if (head.exitCode === 0 && head.stdout.trim().length > 0) branch = head.stdout.trim()
+    }
+    const matchPath = covering?.path ?? dir
+    const activeOperations = []
+    for (const op of this.runner.operations.values()) {
+      if (op.status !== 'running') continue
+      if (op.worktreePath === matchPath || op.worktreePath === dir) {
+        activeOperations.push({
+          id: op.id,
+          kind: op.kind,
+          label: op.label,
+          actionName: op.actionName ?? null,
+          status: op.status,
+        })
+      }
+    }
+    const envFilePath = covering !== null ? storeOf(covering.commonDir).envFile(covering.branch) : null
+    return {
+      cwd: dir,
+      repositoryRoot: covering?.repositoryRoot ?? info?.root ?? dir,
+      branch,
+      inWorktree: covering !== null,
+      worktreeId: covering?.path ?? null,
+      envName: config.name ?? null,
+      envSourcePath: config.sourcePath ?? null,
+      envFile: envFilePath !== null && existsSync(envFilePath) ? envFilePath : null,
+      actions: config.actions ?? [],
+      activeOperations,
+    }
+  }
+
+  /**
+   * Run one named environment action in any session directory (managed worktree
+   * or regular local project checkout).
+   * @param {string} dir - working directory.
+   * @param {string} actionName - action name.
+   * @returns {Promise<{ operationId: string }>}
+   */
+  async startActionForDirectory(dir, actionName) {
+    const absDir = resolve(dir)
+    const covering = this.coveringWorktree(absDir)
+    if (covering !== null) {
+      return await this.startAction(covering.path, actionName)
+    }
+    const info = await repoInfo(this.git, absDir)
+    const config = info !== null
+      ? await discoverEnvConfig(this.git, absDir)
+      : ((await listEnvConfigs(null, absDir)).environments.find(e => e.valid)?.environment ?? null)
+    const action = config?.actions?.find(entry => entry.name === actionName)
+    if (action === undefined) {
+      const err = new Error(`unknown action "${actionName}" for ${absDir}`)
+      err.status = 404
+      throw err
+    }
+    let branch = ''
+    if (info !== null) {
+      const head = await this.git.run(absDir, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowedExitCodes: [0, 128] })
+      if (head.exitCode === 0) branch = head.stdout.trim()
+    }
+    const labelScope = branch.length > 0 ? branch : basename(absDir)
+    const operation = this.runner.begin('action', `${labelScope} · ${action.name}`, absDir)
+    operation.actionName = action.name
+    const sourceRoot = info?.root ?? absDir
+    const env = {
+      DSH_SOURCE_TREE_PATH: sourceRoot,
+      CODEX_SOURCE_TREE_PATH: sourceRoot,
+      DSH_WORKTREE_PATH: absDir,
+      CODEX_WORKTREE_PATH: absDir,
+      DSH_WORKTREE_BRANCH: branch,
+    }
+    this.busyPaths.add(absDir)
+    void (async () => {
+      try {
+        this.runner.log(operation, 'meta', `Running "${action.name}" in ${absDir}\n`)
+        const result = await this.runner.runScript({
+          ctx: this.ctx, operation, cwd: absDir, script: action.command, env,
+          timeoutMs: this.config.setupTimeoutMs, captureEnv: false,
+        })
+        this.runner.finish(operation, result.status === 'succeeded' ? 'succeeded' : result.status === 'cancelled' ? 'cancelled' : 'failed')
+      } finally {
+        this.busyPaths.delete(absDir)
       }
     })()
     return { operationId: operation.id }

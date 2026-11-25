@@ -179,20 +179,38 @@ test('client.js registers all 8 locales with identical keys and reacts live to c
     }
   }
 
-  // Verify slot metadata passes locale namespace and dynamic title/label thunks react to locale switches
+  // Verify slot metadata passes locale namespace, header actions & on-demand right log tab (without guide entry) are registered
   const mainSlot = slots.find(s => s.meta.name === 'main')
+  const headerActionsSlot = slots.find(s => s.meta.name === 'conversation.session.header.utilities')
+  const rightLogPaneSlot = slots.find(s => s.meta.name === 'sidebar.right.pane.tab')
+  const rightLogTitleSlot = slots.find(s => s.meta.name === 'sidebar.right.pane.tab.title')
+  const overlaySlot = slots.find(s => s.meta.name === 'shell.overlay')
   const menuSlot = slots.find(s => s.meta.name === 'sidebar.workspaces.session.menu.item')
   assert.equal(mainSlot.meta.locale, 'dshWorktreeEnv')
+  assert.ok(headerActionsSlot, 'expected conversation.session.header.utilities slot to be registered')
+  assert.equal(headerActionsSlot.meta.locale, 'dshWorktreeEnv')
+  assert.ok(rightLogPaneSlot && rightLogTitleSlot, 'expected on-demand right-sidebar log tab slots')
+  assert.equal(rightLogPaneSlot.meta.key, 'dsh-worktree-env-logs')
+  assert.ok(overlaySlot, 'expected shell.overlay fallback log drawer slot to be registered')
+  assert.equal(overlaySlot.meta.locale, 'dshWorktreeEnv')
   assert.equal(menuSlot.meta.locale, 'dshWorktreeEnv')
-  assert.ok(rightTab)
+  assert.ok(rightTab, 'expected on-demand sidebarRightTabs log tab to be registered')
+  assert.equal(rightTab.priority, 'extension')
+  assert.equal(rightTab.guide, undefined, 'log tab must omit guide so it stays off the sidebar launcher')
 
-  assert.equal(rightTab.title(), 'Worktree 环境')
+  // Verify live locale switching updates dynamic translations & tab title immediately
+  assert.equal(rightTab.title(), '运行日志')
+  const t = localeService.bind('dshWorktreeEnv')
+  assert.equal(t('header.actions.menu'), '快捷操作')
   localeService.setLocale('en')
-  assert.equal(rightTab.title(), 'Worktree env')
+  assert.equal(rightTab.title(), 'Operation logs')
+  assert.equal(t('header.actions.menu'), 'Quick actions')
   localeService.setLocale('ja')
-  assert.equal(rightTab.title(), 'Worktree 環境')
+  assert.equal(rightTab.title(), '実行ログ')
+  assert.equal(t('header.actions.menu'), 'クイックアクション')
   localeService.setLocale('de')
-  assert.equal(rightTab.title(), 'Worktree-Umgebung')
+  assert.equal(rightTab.title(), 'Ausführungsprotokolle')
+  assert.equal(t('header.actions.menu'), 'Schnellaktionen')
 
   // Render WorktreePanel under en vs zh vs ja to confirm UI text follows ctx.locale (not navigator.language)
   const extractText = (node) => {

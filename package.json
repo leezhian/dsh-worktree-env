@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Worktree enhancements for DeepSeek Harness: local environments (setup/cleanup/actions), uncommitted-change handoff, three-way patch backflow, lossless snapshot archiving, and quota cleanup.",
+  "icon": "./icon.svg",
   "exports": {
     ".": "./src/index.js",
     "./client": "./client.js",

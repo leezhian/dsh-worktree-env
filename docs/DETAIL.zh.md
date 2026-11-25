@@ -11,7 +11,7 @@
 - **配额自动清理**：每个仓库最多保留 `keepCount`（默认 `15`）个活跃工作树，按最近访问时间自动归档旧目录，并保护已置顶会话、进行中会话及正在执行脚本的工作树。
 - **Shell 环境变量注入**：在托管工作树内执行模型 Shell 命令时，自动注入 `DSH_WORKTREE_SOURCE_ROOT`、`DSH_WORKTREE_PATH`、`DSH_WORKTREE_BRANCH` 与 `DSH_WORKTREE_ENV_FILE`。
 - **Agent 工具**：提供 `worktree_handoff`、`worktree_setup`、`worktree_actions`、`worktree_apply_patch`、`worktree_archive`、`worktree_restore` 共 6 个工具。
-- **可视化界面与实时多语言**：提供侧边栏 **Worktrees** 面板——**设置**页签（项目内工作树相对目录并与 `@deepseek-ai/dsh-experimental-worktree` 同步、远程更新开关、保留数量、删除确认、仅扫描 DSH 工作树的折叠托管列表）与**环境**页签（项目列表、带变量提示的只读详情预览、可视化 `.toml` 编辑器），以及右侧栏快捷操作页签和会话菜单入口。全部界面文案随 DSH 语言设置实时切换。
+- **可视化界面与实时多语言**：提供侧边栏 **Worktrees** 面板——**设置**页签（项目内工作树相对目录并与 `@deepseek-ai/dsh-experimental-worktree` 同步、远程更新开关、保留数量、删除确认、仅扫描 DSH 工作树的折叠托管列表）与**环境**页签（项目列表、带变量提示的只读详情预览、可视化 `.toml` 编辑器），以及**会话顶部栏快捷操作**（优先在 DSH 原生交互终端中执行，未启用原生终端时自动降级到右侧面板按需日志页签或悬浮抽屉）和会话菜单入口。全部界面文案随 DSH 语言设置实时切换。
 
 ## 配置说明
 

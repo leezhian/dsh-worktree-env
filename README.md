@@ -7,12 +7,12 @@ Native worktree enhancement plugin for **DeepSeek Harness (DSH)**, adding local 
 ## Features
 
 - **Local Environment Orchestration** — Reads per-repository `.agents/environments/*.toml` files (stored alongside DSH's `.agents/worktrees`, completely isolated from `.codex/`), supporting per-platform `[setup]` / `[cleanup]` scripts (`default` / `macOS` / `Linux` / `Windows`), live SSE log streaming, and POSIX environment-variable delta capture.
-- **Quick Actions** — Configure custom actions with name, icon (`tool` / `run` / `debug` / `test`), multi-line scripts, and platform filters; trigger them with one click from the right sidebar.
+- **Quick Actions** — Configure custom actions with name, icon (`tool` / `run` / `debug` / `test`), multi-line scripts, and platform filters; run them with one click from the **conversation top bar** — prefers DSH's native interactive terminal when enabled, and falls back to an on-demand right-sidebar log tab (or floating log drawer).
 - **Handoff & Three-Way Patch Backflow** — Losslessly package staged, unstaged, and untracked changes into a new worktree (with optional `git fetch`), and merge worktree changes back to the source checkout using `git apply --3way` with conflict precheck.
 - **Lossless Snapshot Archiving & Restore** — Save uncommitted changes to a hidden Git snapshot ref (`refs/dsh-worktree-env/snapshots/…`) before archiving, block destruction of nested repos/submodules, and restore uncommitted work with optional setup re-run.
 - **Settings & Managed Worktrees** — Sync the project-relative worktree directory (default `.agents/worktrees`) directly with official `@deepseek-ai/dsh-experimental-worktree`, auto-clean old checkouts beyond `keepCount` while protecting pinned/active chats, and scan only DSH-created worktrees.
 - **Multilingual UI** — Follows DSH's active UI language in real time across all 8 built-in DSH languages (`en`, `zh`, `ja`, `es`, `fr`, `de`, `ru`, `pt`).
-- **Native DSH Integration** — 6 agent tools, `systemPrompt` context, `shellEnv` variable injection, `/worktree` command, sidebar **Worktrees** panel (Settings & Environments), right-sidebar tab, and session menu entries.
+- **Native DSH Integration** — 6 agent tools, `systemPrompt` context, `shellEnv` variable injection, `/worktree` command, sidebar **Worktrees** panel (Settings & Environments), conversation top-bar quick actions, and session menu entries.
 
 ## Environment Config (`.agents/environments/environment.toml`)
 

@@ -24,8 +24,29 @@ export function registerServer(ctx, service) {
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/repo-preferences`, handler: (req, res) => guard(res, () => preferencesRoute(req, res, service)) }), 'dsh-worktree-env: preference route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/quota`, handler: (req, res) => guard(res, async () => json(res, await service.enforceQuota())) }), 'dsh-worktree-env: quota route'),
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/config`, handler: (req, res) => guard(res, () => configRoute(req, res, service)) }), 'dsh-worktree-env: config route'),
+    ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/session-actions`, handler: (req, res) => guard(res, () => sessionActionsRoute(req, res, service)) }), 'dsh-worktree-env: session actions route'),
+    ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${prefix}/actions/run`, handler: (req, res) => guard(res, () => runActionRoute(req, res, service)) }), 'dsh-worktree-env: run action route'),
   ]
   return () => { for (const dispose of disposers) dispose() }
+}
+
+async function sessionActionsRoute(req, res, service) {
+  requireMethod(req, 'GET')
+  const url = new URL(req.url ?? '/', 'http://local')
+  const sessionId = url.searchParams.get('sessionId') ?? undefined
+  const cwd = url.searchParams.get('cwd') ?? undefined
+  json(res, await service.sessionActions(sessionId, cwd))
+}
+
+async function runActionRoute(req, res, service) {
+  requireMethod(req, 'POST')
+  const body = await readBody(req)
+  if (body === null || typeof body.action !== 'string' || body.action.length === 0) {
+    throw httpError(400, 'action name required')
+  }
+  const dir = service.sessionDirectory(body.sessionId, body.cwd)
+  if (dir === null) throw httpError(400, 'sessionId or cwd required')
+  json(res, await service.startActionForDirectory(dir, body.action))
 }
 
 async function configRoute(req, res, service) {

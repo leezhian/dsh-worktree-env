@@ -41,9 +41,10 @@ to direct Git commands if the experimental worktree service is disabled.
   worktree directory synced with `@deepseek-ai/dsh-experimental-worktree`, fetch
   toggle, `keepCount`, delete confirmation, and a collapsible DSH-only managed
   worktrees list) and **Environments** (project list, read-only preview with
-  available variables, and visual `.toml` editor), plus a right-sidebar quick
-  actions tab and session menu items. All UI copy follows DSH's active language
-  in real time.
+  available variables, and visual `.toml` editor), plus **conversation top-bar
+  quick actions** (preferring DSH's native interactive terminal when enabled,
+  falling back to an on-demand right-sidebar log tab or floating drawer) and
+  session menu items. All UI copy follows DSH's active language in real time.
 
 ## Configuration
 

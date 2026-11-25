@@ -2,10 +2,10 @@
  * dsh-worktree-env Web client:
  * - Native DSH `--dsw-alias-*` design system (light & dark mode, macOS clearance)
  * - Main "Worktrees" panel: Settings (creation & cleanup synced with DSH's
- *   built-in worktree module + collapsible managed worktrees list) and a tabbed
- *   visual `environment.toml` editor with per-platform script switcher and live
- *   SSE setup logs
- * - Right-sidebar tab ("Worktree env") with quick actions & live logs
+ *   built-in worktree module + collapsible managed worktrees list) and a visual
+ *   `environment.toml` editor with per-platform script switcher
+ * - Session top-bar quick actions (`conversation.session.header.utilities`)
+ *   with portaled menu and floating live SSE log drawer
  * - Session menu items (`sidebar.workspaces.session.menu.item`) for /worktree
  */
 window.__ModuleLoader__.load({
@@ -14,11 +14,29 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const { useState, useEffect, useMemo, useRef, useCallback } = React
+    let ReactDOM = null
+    try { ReactDOM = require('react-dom') } catch {}
     let NativePrimitives = null
     try { NativePrimitives = require('@deepseek-ai/dsh-client-ui-primitives') } catch {}
 
+    const hasNativeTooltip = typeof NativePrimitives?.Tooltip === 'function'
+    function Hint({ label, side = 'bottom', align, delayMs = 250, children }) {
+      if (!hasNativeTooltip || typeof label !== 'string' || label.length === 0) return children
+      return h(NativePrimitives.Tooltip, { label, side, align, delayMs, portal: true }, children)
+    }
+
+    function portalToBody(node) {
+      if (node === null || node === undefined) return null
+      if (typeof ReactDOM?.createPortal === 'function' && typeof document !== 'undefined' && document.body) {
+        return ReactDOM.createPortal(node, document.body)
+      }
+      return node
+    }
+
     const NS = 'dshWorktreeEnv'
     const API = '/api/dsh-worktree-env'
+    const LOG_TAB_ID = 'dsh-worktree-env-logs'
+    const LOG_TAB_KIND = 'dsh-worktree-env-logs'
 
     const zh = {
       'panel.title': 'Worktrees',
@@ -97,7 +115,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': '清理脚本',
       'env.cleanupDesc': '清理工作树之前在项目根目录下运行',
       'env.actionsTitle': '操作',
-      'env.actionsDesc': '以下操作可运行任意命令，并显示在侧边栏中',
+      'env.actionsDesc': '以下操作可运行任意命令，并显示在顶部栏中',
       'env.varsBtn': '变量',
       'env.vars.source': '源仓库根目录路径',
       'env.vars.worktree': '当前工作树目录路径',
@@ -126,10 +144,12 @@ window.__ModuleLoader__.load({
       'env.addAction': '添加操作',
       'env.removeAction': '删除操作',
       'env.parseError': '配置文件解析失败',
-      'tab.title': 'Worktree 环境',
-      'tab.empty': '当前没有活跃的 Worktree。',
-      'tab.emptyHint': '创建或切入 Worktree 后，可在此一键运行快捷 Actions、重跑 Setup 或回流主目录。',
-      'tab.refresh': '刷新',
+      'header.actions.run': '运行 {name}',
+      'header.actions.menu': '快捷操作',
+      'header.actions.viewLogs': '查看运行日志',
+      'header.actions.running': '运行中',
+      'header.actions.focusTerminal': '切换到 {name} 终端',
+      'header.actions.runNewTerminal': '在新终端中运行',
       'menu.handoff': '带改动转入 Worktree',
       'menu.apply': '应用改动到主目录',
       'menu.archive': '快照归档 Worktree',
@@ -140,6 +160,9 @@ window.__ModuleLoader__.load({
       'logs.copied': '已复制',
       'logs.close': '关闭',
       'logs.cancel': '停止',
+      'logs.minimize': '收起',
+      'logs.expand': '展开',
+      'logs.rerun': '重新运行',
       'logs.empty': '等待输出…',
       'logs.status.running': '运行中',
       'logs.status.succeeded': '成功',
@@ -224,7 +247,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': 'Cleanup script',
       'env.cleanupDesc': 'Runs in the project root before cleaning up a worktree',
       'env.actionsTitle': 'Actions',
-      'env.actionsDesc': 'Actions run custom commands and appear in the sidebar',
+      'env.actionsDesc': 'Actions run custom commands and appear in the top bar',
       'env.varsBtn': 'Variables',
       'env.vars.source': 'Source repository root path',
       'env.vars.worktree': 'Current worktree directory path',
@@ -253,10 +276,12 @@ window.__ModuleLoader__.load({
       'env.addAction': 'Add action',
       'env.removeAction': 'Delete action',
       'env.parseError': 'Failed to parse config file',
-      'tab.title': 'Worktree env',
-      'tab.empty': 'No active worktrees.',
-      'tab.emptyHint': 'Create or enter a worktree to run quick actions, re-run setup, or apply changes back to source here.',
-      'tab.refresh': 'Refresh',
+      'header.actions.run': 'Run {name}',
+      'header.actions.menu': 'Quick actions',
+      'header.actions.viewLogs': 'View operation logs',
+      'header.actions.running': 'Running',
+      'header.actions.focusTerminal': 'Focus {name} terminal',
+      'header.actions.runNewTerminal': 'Run in a new terminal',
       'menu.handoff': 'Move into worktree with changes',
       'menu.apply': 'Apply changes to source',
       'menu.archive': 'Archive worktree',
@@ -267,6 +292,9 @@ window.__ModuleLoader__.load({
       'logs.copied': 'Copied',
       'logs.close': 'Close',
       'logs.cancel': 'Stop',
+      'logs.minimize': 'Minimize',
+      'logs.expand': 'Expand',
+      'logs.rerun': 'Re-run',
       'logs.empty': 'Waiting for output…',
       'logs.status.running': 'Running',
       'logs.status.succeeded': 'Succeeded',
@@ -351,7 +379,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': 'クリーンアップスクリプト',
       'env.cleanupDesc': 'ワークツリー削除前にプロジェクトルートで実行されます',
       'env.actionsTitle': 'アクション',
-      'env.actionsDesc': '任意のコマンドを実行でき、サイドバーに表示されます',
+      'env.actionsDesc': '任意のコマンドを実行でき、トップバーに表示されます',
       'env.varsBtn': '変数',
       'env.vars.source': '元リポジトリのルートパス',
       'env.vars.worktree': '現在のワークツリーディレクトリパス',
@@ -380,10 +408,12 @@ window.__ModuleLoader__.load({
       'env.addAction': 'アクションを追加',
       'env.removeAction': 'アクションを削除',
       'env.parseError': '設定ファイルの解析に失敗しました',
-      'tab.title': 'Worktree 環境',
-      'tab.empty': 'アクティブなワークツリーがありません。',
-      'tab.emptyHint': 'ワークツリーを作成または開くと、ここからクイックアクションの実行、Setup の再実行、元ディレクトリへの適用ができます。',
-      'tab.refresh': '更新',
+      'header.actions.run': '{name} を実行',
+      'header.actions.menu': 'クイックアクション',
+      'header.actions.viewLogs': '実行ログを表示',
+      'header.actions.running': '実行中',
+      'header.actions.focusTerminal': '{name} のターミナルを表示',
+      'header.actions.runNewTerminal': '新しいターミナルで実行',
       'menu.handoff': '変更を引き継いで Worktree へ移動',
       'menu.apply': '変更を元ディレクトリに適用',
       'menu.archive': 'Worktree をアーカイブ',
@@ -394,6 +424,9 @@ window.__ModuleLoader__.load({
       'logs.copied': 'コピーしました',
       'logs.close': '閉じる',
       'logs.cancel': '停止',
+      'logs.minimize': '折りたたむ',
+      'logs.expand': '展開',
+      'logs.rerun': '再実行',
       'logs.empty': '出力を待機中…',
       'logs.status.running': '実行中',
       'logs.status.succeeded': '成功',
@@ -478,7 +511,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': 'Script de limpieza',
       'env.cleanupDesc': 'Se ejecuta en la raíz del proyecto antes de limpiar un worktree',
       'env.actionsTitle': 'Acciones',
-      'env.actionsDesc': 'Las acciones ejecutan comandos personalizados y aparecen en la barra lateral',
+      'env.actionsDesc': 'Las acciones ejecutan comandos personalizados y aparecen en la barra superior',
       'env.varsBtn': 'Variables',
       'env.vars.source': 'Ruta raíz del repositorio origen',
       'env.vars.worktree': 'Ruta del directorio del worktree actual',
@@ -507,10 +540,12 @@ window.__ModuleLoader__.load({
       'env.addAction': 'Añadir acción',
       'env.removeAction': 'Eliminar acción',
       'env.parseError': 'Error al analizar el archivo de configuración',
-      'tab.title': 'Entorno Worktree',
-      'tab.empty': 'No hay worktrees activos.',
-      'tab.emptyHint': 'Crea o entra en un worktree para ejecutar acciones rápidas, repetir setup o aplicar cambios al origen.',
-      'tab.refresh': 'Actualizar',
+      'header.actions.run': 'Ejecutar {name}',
+      'header.actions.menu': 'Acciones rápidas',
+      'header.actions.viewLogs': 'Ver registros de operación',
+      'header.actions.running': 'En ejecución',
+      'header.actions.focusTerminal': 'Ir al terminal de {name}',
+      'header.actions.runNewTerminal': 'Ejecutar en un nuevo terminal',
       'menu.handoff': 'Mover a worktree con cambios',
       'menu.apply': 'Aplicar cambios al origen',
       'menu.archive': 'Archivar worktree',
@@ -521,6 +556,9 @@ window.__ModuleLoader__.load({
       'logs.copied': 'Copiado',
       'logs.close': 'Cerrar',
       'logs.cancel': 'Detener',
+      'logs.minimize': 'Minimizar',
+      'logs.expand': 'Expandir',
+      'logs.rerun': 'Volver a ejecutar',
       'logs.empty': 'Esperando salida…',
       'logs.status.running': 'En ejecución',
       'logs.status.succeeded': 'Completado',
@@ -605,7 +643,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': 'Script de nettoyage',
       'env.cleanupDesc': 'Exécuté à la racine du projet avant la suppression d’un worktree',
       'env.actionsTitle': 'Actions',
-      'env.actionsDesc': 'Les actions exécutent des commandes personnalisées et apparaissent dans la barre latérale',
+      'env.actionsDesc': 'Les actions exécutent des commandes personnalisées et apparaissent dans la barre supérieure',
       'env.varsBtn': 'Variables',
       'env.vars.source': 'Chemin racine du dépôt source',
       'env.vars.worktree': 'Chemin du worktree courant',
@@ -634,10 +672,12 @@ window.__ModuleLoader__.load({
       'env.addAction': 'Ajouter une action',
       'env.removeAction': 'Supprimer l’action',
       'env.parseError': 'Échec de l’analyse du fichier de configuration',
-      'tab.title': 'Env Worktree',
-      'tab.empty': 'Aucun worktree actif.',
-      'tab.emptyHint': 'Créez ou ouvrez un worktree pour lancer des actions rapides, relancer le setup ou appliquer vos modifications.',
-      'tab.refresh': 'Actualiser',
+      'header.actions.run': 'Exécuter {name}',
+      'header.actions.menu': 'Actions rapides',
+      'header.actions.viewLogs': 'Voir les journaux',
+      'header.actions.running': 'En cours',
+      'header.actions.focusTerminal': 'Afficher le terminal {name}',
+      'header.actions.runNewTerminal': 'Exécuter dans un nouveau terminal',
       'menu.handoff': 'Basculer dans un worktree avec les modifications',
       'menu.apply': 'Appliquer les modifications à la source',
       'menu.archive': 'Archiver le worktree',
@@ -648,6 +688,9 @@ window.__ModuleLoader__.load({
       'logs.copied': 'Copié',
       'logs.close': 'Fermer',
       'logs.cancel': 'Arrêter',
+      'logs.minimize': 'Réduire',
+      'logs.expand': 'Développer',
+      'logs.rerun': 'Relancer',
       'logs.empty': 'En attente de sortie…',
       'logs.status.running': 'En cours',
       'logs.status.succeeded': 'Réussi',
@@ -732,7 +775,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': 'Cleanup-Skript',
       'env.cleanupDesc': 'Wird vor dem Bereinigen eines Worktrees im Projektstamm ausgeführt',
       'env.actionsTitle': 'Aktionen',
-      'env.actionsDesc': 'Aktionen führen benutzerdefinierte Befehle aus und erscheinen in der Seitenleiste',
+      'env.actionsDesc': 'Aktionen führen benutzerdefinierte Befehle aus und erscheinen in der oberen Leiste',
       'env.varsBtn': 'Variablen',
       'env.vars.source': 'Stammpfad des Quell-Repositorys',
       'env.vars.worktree': 'Pfad des aktuellen Worktree-Verzeichnisses',
@@ -761,10 +804,12 @@ window.__ModuleLoader__.load({
       'env.addAction': 'Aktion hinzufügen',
       'env.removeAction': 'Aktion löschen',
       'env.parseError': 'Konfigurationsdatei konnte nicht geparst werden',
-      'tab.title': 'Worktree-Umgebung',
-      'tab.empty': 'Keine aktiven Worktrees.',
-      'tab.emptyHint': 'Erstellen oder öffnen Sie einen Worktree, um Schnellaktionen auszuführen, Setup erneut zu starten oder Änderungen zurückzuspielen.',
-      'tab.refresh': 'Aktualisieren',
+      'header.actions.run': '{name} ausführen',
+      'header.actions.menu': 'Schnellaktionen',
+      'header.actions.viewLogs': 'Ausführungsprotokolle anzeigen',
+      'header.actions.running': 'Läuft',
+      'header.actions.focusTerminal': 'Zum Terminal „{name}“ wechseln',
+      'header.actions.runNewTerminal': 'In neuem Terminal ausführen',
       'menu.handoff': 'Mit Änderungen in Worktree wechseln',
       'menu.apply': 'Änderungen auf Quelle anwenden',
       'menu.archive': 'Worktree archivieren',
@@ -775,6 +820,9 @@ window.__ModuleLoader__.load({
       'logs.copied': 'Kopiert',
       'logs.close': 'Schließen',
       'logs.cancel': 'Stoppen',
+      'logs.minimize': 'Minimieren',
+      'logs.expand': 'Erweitern',
+      'logs.rerun': 'Erneut ausführen',
       'logs.empty': 'Warte auf Ausgabe…',
       'logs.status.running': 'Läuft',
       'logs.status.succeeded': 'Erfolgreich',
@@ -859,7 +907,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': 'Скрипт очистки',
       'env.cleanupDesc': 'Запускается в корне проекта перед очисткой worktree',
       'env.actionsTitle': 'Действия',
-      'env.actionsDesc': 'Действия запускают произвольные команды и отображаются на боковой панели',
+      'env.actionsDesc': 'Действия запускают произвольные команды и отображаются на верхней панели',
       'env.varsBtn': 'Переменные',
       'env.vars.source': 'Корневой путь исходного репозитория',
       'env.vars.worktree': 'Путь текущего каталога worktree',
@@ -888,10 +936,12 @@ window.__ModuleLoader__.load({
       'env.addAction': 'Добавить действие',
       'env.removeAction': 'Удалить действие',
       'env.parseError': 'Не удалось разобрать файл конфигурации',
-      'tab.title': 'Окружение Worktree',
-      'tab.empty': 'Нет активных worktree.',
-      'tab.emptyHint': 'Создайте или откройте worktree, чтобы запускать быстрые действия, повторять setup или применять изменения в источник.',
-      'tab.refresh': 'Обновить',
+      'header.actions.run': 'Запустить {name}',
+      'header.actions.menu': 'Быстрые действия',
+      'header.actions.viewLogs': 'Показать журнал операций',
+      'header.actions.running': 'Выполняется',
+      'header.actions.focusTerminal': 'Перейти в терминал {name}',
+      'header.actions.runNewTerminal': 'Запустить в новом терминале',
       'menu.handoff': 'Перенести с изменениями в Worktree',
       'menu.apply': 'Применить изменения в источник',
       'menu.archive': 'Архивировать Worktree',
@@ -902,6 +952,9 @@ window.__ModuleLoader__.load({
       'logs.copied': 'Скопировано',
       'logs.close': 'Закрыть',
       'logs.cancel': 'Остановить',
+      'logs.minimize': 'Свернуть',
+      'logs.expand': 'Развернуть',
+      'logs.rerun': 'Перезапустить',
       'logs.empty': 'Ожидание вывода…',
       'logs.status.running': 'Выполняется',
       'logs.status.succeeded': 'Успешно',
@@ -986,7 +1039,7 @@ window.__ModuleLoader__.load({
       'env.cleanupTitle': 'Script de limpeza',
       'env.cleanupDesc': 'Executado na raiz do projeto antes de limpar um worktree',
       'env.actionsTitle': 'Ações',
-      'env.actionsDesc': 'As ações executam comandos personalizados e aparecem na barra lateral',
+      'env.actionsDesc': 'As ações executam comandos personalizados e aparecem na barra superior',
       'env.varsBtn': 'Variáveis',
       'env.vars.source': 'Caminho raiz do repositório de origem',
       'env.vars.worktree': 'Caminho do diretório do worktree atual',
@@ -1015,10 +1068,12 @@ window.__ModuleLoader__.load({
       'env.addAction': 'Adicionar ação',
       'env.removeAction': 'Excluir ação',
       'env.parseError': 'Falha ao analisar o arquivo de configuração',
-      'tab.title': 'Ambiente Worktree',
-      'tab.empty': 'Nenhum worktree ativo.',
-      'tab.emptyHint': 'Crie ou abra um worktree para executar ações rápidas, reexecutar setup ou aplicar alterações na origem.',
-      'tab.refresh': 'Atualizar',
+      'header.actions.run': 'Executar {name}',
+      'header.actions.menu': 'Ações rápidas',
+      'header.actions.viewLogs': 'Ver logs de operação',
+      'header.actions.running': 'Em execução',
+      'header.actions.focusTerminal': 'Ir para o terminal de {name}',
+      'header.actions.runNewTerminal': 'Executar em um novo terminal',
       'menu.handoff': 'Mover para worktree com alterações',
       'menu.apply': 'Aplicar alterações na origem',
       'menu.archive': 'Arquivar worktree',
@@ -1029,6 +1084,9 @@ window.__ModuleLoader__.load({
       'logs.copied': 'Copiado',
       'logs.close': 'Fechar',
       'logs.cancel': 'Parar',
+      'logs.minimize': 'Minimizar',
+      'logs.expand': 'Expandir',
+      'logs.rerun': 'Executar novamente',
       'logs.empty': 'Aguardando saída…',
       'logs.status.running': 'Em execução',
       'logs.status.succeeded': 'Concluído',
@@ -1160,19 +1218,69 @@ window.__ModuleLoader__.load({
 .dshwt-radio-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--dsw-radius-md, 12px); border: 0.5px solid var(--dsw-alias-border-l4, rgba(128,128,128,.22)); cursor: pointer; font-size: 13px; }
 .dshwt-radio-card[data-selected="true"] { border-color: var(--dsw-alias-border-selected, var(--dsw-alias-border-l4)); background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,.08)); }
 
-/* Operation Log Drawer */
-.dshwt-drawer { position: fixed; right: 20px; bottom: 20px; z-index: 900; width: min(640px, calc(100vw - 40px)); height: min(380px, 55vh); display: flex; flex-direction: column; border-radius: 14px; border: 0.5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.3)); background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #fff)); box-shadow: var(--dsw-elevation-prominent, 0 16px 40px rgba(0,0,0,.22)); overflow: hidden; }
-.dshwt-drawer-inline { position: relative; right: auto; bottom: auto; width: 100%; height: 240px; box-shadow: none; }
-.dshwt-drawer-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.2)); flex: none; }
-.dshwt-drawer-title { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dshwt-drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px; background: var(--dsw-alias-bg-module-platform, rgba(0,0,0,.04)); font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 11.5px; line-height: 17px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Operation Log Drawer (DSH native floating surface & code-block tokens, anchored top-right below header so it never blocks the composer) */
+.dshwt-drawer { pointer-events: auto; position: fixed; top: calc(var(--dsh-frame-top-clearance, 0px) + 84px); right: 20px; z-index: 950; width: min(560px, calc(100vw - 40px)); height: min(360px, calc(100vh - 220px)); display: flex; flex-direction: column; border-radius: var(--dsw-radius-xl, 18px); border: 0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.18)); background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #fff))); backdrop-filter: var(--dsw-menu-backdrop-filter, none); --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); box-shadow: var(--dsw-elevation-prominent, 0 12px 36px rgba(0,0,0,.16)); color: var(--dsw-alias-label-primary, inherit); font-family: var(--dsw-font-family, inherit); overflow: hidden; }
+.dshwt-drawer-min { width: auto; min-width: 220px; max-width: min(360px, calc(100vw - 40px)); height: auto; }
+.dshwt-drawer-head { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 8px 0 14px; flex: none; }
+.dshwt-drawer-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: default; }
+.dshwt-drawer-min .dshwt-drawer-main { cursor: pointer; }
+.dshwt-drawer-main:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: 2px; border-radius: var(--dsw-radius-sm, 8px); }
+.dshwt-drawer-title { font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dsw-alias-label-primary, inherit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshwt-drawer-status { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary, #656d76); white-space: nowrap; flex: none; }
+.dshwt-drawer-status[data-status="failed"] { color: var(--dsw-alias-state-error-primary, #cf222e); }
+.dshwt-drawer-sep { width: 2px; height: 2px; border-radius: 50%; background: var(--dsw-alias-label-caption, #8a8f98); flex: none; }
+.dshwt-drawer-acts { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.dshwt-log-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--dsw-alias-label-caption, #8a8f98); }
+.dshwt-log-dot[data-status="running"] { background: var(--dsw-alias-state-success-primary, #1a7f37); animation: dshwt-pulse 1.2s ease-in-out infinite; }
+.dshwt-log-dot[data-status="succeeded"] { background: var(--dsw-alias-state-success-primary, #1a7f37); }
+.dshwt-log-dot[data-status="failed"] { background: var(--dsw-alias-state-error-primary, #cf222e); }
+.dshwt-drawer-body-wrap { flex: 1; min-height: 0; padding: 0 10px 10px; display: flex; }
+.dshwt-drawer-body { --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2); --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2); flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 12px 14px; border-radius: var(--dsw-radius-md, 12px); border: 0.5px solid var(--dsw-alias-border-l1, rgba(128,128,128,.1)); background: var(--dsw-alias-markdown-code-block, var(--dsw-alias-bg-module-platform, rgba(128,128,128,.05))); color: var(--dsw-alias-label-primary, inherit); font: var(--dsw-font-markdown-code-block-small, 12px/19px var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dshwt-drawer-body span[data-stream="stderr"] { color: var(--dsw-alias-state-error-primary, #cf222e); }
-.dshwt-drawer-body span[data-stream="meta"] { color: var(--dsw-alias-label-caption, #8a8f98); }
+.dshwt-drawer-body span[data-stream="meta"] { color: var(--dsw-alias-label-tertiary, #656d76); }
 
-/* Right-sidebar pane */
-.dshwt-pane { box-sizing: border-box; display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 10px; padding: 12px; overflow: auto; font-size: 12.5px; color: var(--dsw-alias-label-primary, inherit); }
-.dshwt-pane-head { display: flex; align-items: center; gap: 8px; flex: none; }
-.dshwt-pane-card { border: 0.5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.25)); border-radius: 12px; background: var(--dsw-alias-bg-layer-1, transparent); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+/* Right-sidebar Action Log tab (full-height native DSH pane) */
+.dshwt-rlog { box-sizing: border-box; display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--dsw-alias-label-primary, inherit); font-family: var(--dsw-font-family, inherit); font-size: var(--dsh-content-font-size-secondary, 13px); }
+.dshwt-rlog-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 8px 14px; flex: none; }
+.dshwt-rlog-runs { display: flex; align-items: center; gap: 4px; padding: 0 12px 8px; overflow-x: auto; flex: none; }
+.dshwt-rlog-run { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: var(--dsw-alias-label-tertiary, #656d76); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
+@media (hover: hover) { .dshwt-rlog-run:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.08)); color: var(--dsw-alias-label-primary, inherit); } }
+.dshwt-rlog-run[aria-selected="true"] { background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,.1)); color: var(--dsw-alias-label-primary, inherit); font-weight: 500; }
+.dshwt-rlog-run:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: 2px; }
+.dshwt-rlog-body-wrap { flex: 1; min-height: 0; padding: 0 12px 12px; display: flex; }
+.dshwt-rlog-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; color: var(--dsw-alias-label-tertiary, #656d76); font-size: 13px; }
+.dshwt-rtab-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.dshwt-rtab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Session top-bar quick actions (native DSH header utility style) */
+.dshwt-hdr-wrap { position: relative; display: inline-flex; align-items: center; flex: none; }
+.dshwt-hdr-split { display: inline-flex; align-items: center; height: 28px; border-radius: var(--dsw-radius-sm, 8px); overflow: hidden; transition: background 120ms ease; }
+@media (hover: hover) { .dshwt-hdr-split:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.08)); } }
+.dshwt-hdr-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 28px; padding: 0 8px; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: var(--dsw-alias-label-secondary, #57606a); font: inherit; font-size: 12.5px; line-height: 18px; font-weight: 450; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
+@media (hover: hover) { .dshwt-hdr-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.1)); color: var(--dsw-alias-label-primary, inherit); } }
+.dshwt-hdr-split .dshwt-hdr-btn { border-radius: 0; padding: 0 7px 0 8px; }
+.dshwt-hdr-btn:disabled, .dshwt-hdr-caret:disabled { opacity: 0.45; cursor: default; }
+.dshwt-hdr-btn:focus-visible, .dshwt-hdr-caret:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: 2px; }
+.dshwt-hdr-label { max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshwt-hdr-caret { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 22px; height: 28px; padding: 0 5px; border: 0; border-left: 0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,.16)); background: transparent; color: var(--dsw-alias-label-tertiary, #656d76); cursor: pointer; transition: background 120ms ease, color 120ms ease; }
+@media (hover: hover) { .dshwt-hdr-caret:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12)); color: var(--dsw-alias-label-primary, inherit); } }
+.dshwt-hdr-caret[aria-expanded="true"] { background: var(--dsw-alias-interactive-bg-active, rgba(128,128,128,.14)); color: var(--dsw-alias-label-primary, inherit); }
+.dshwt-hdr-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-state-success-primary, #1a7f37); flex: none; animation: dshwt-pulse 1.2s ease-in-out infinite; }
+.dshwt-hdr-menu { position: fixed; z-index: 1050; min-width: 210px; max-width: 300px; padding: 6px; border-radius: var(--dsw-radius-lg, 16px); border: 0.5px solid var(--dsw-alias-border-l3, rgba(128,128,128,.2)); background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-base, #fff)); box-shadow: var(--dsw-elevation-prominent, 0 12px 32px rgba(0,0,0,.16)); color: var(--dsw-alias-label-primary, inherit); display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.dshwt-hdr-menu-row { display: flex; align-items: center; gap: 2px; width: 100%; }
+.dshwt-hdr-menu-row .dshwt-hdr-menu-item { flex: 1; min-width: 0; width: auto; }
+.dshwt-hdr-menu-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: var(--dsw-alias-label-primary, inherit); font: inherit; text-align: left; cursor: pointer; transition: background 120ms ease; }
+@media (hover: hover) { .dshwt-hdr-menu-item:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.08)); } }
+.dshwt-hdr-menu-item:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: -2px; }
+.dshwt-hdr-menu-new { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: var(--dsw-alias-label-tertiary, #656d76); cursor: pointer; flex: none; transition: background 120ms ease, color 120ms ease; }
+@media (hover: hover) { .dshwt-hdr-menu-new:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.1)); color: var(--dsw-alias-label-primary, inherit); } }
+.dshwt-hdr-menu-new:disabled { opacity: 0.4; cursor: default; }
+.dshwt-hdr-menu-new:focus-visible { outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, transparent); outline-offset: -2px; }
+.dshwt-hdr-menu-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.dshwt-hdr-menu-name { font-size: 13px; line-height: 18px; font-weight: 450; color: var(--dsw-alias-label-primary, inherit); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshwt-hdr-menu-cmd { font-family: var(--ds-font-family-code, Menlo, monospace); font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary, #656d76); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshwt-hdr-menu-sep { height: 0.5px; margin: 4px 6px; background: var(--dsw-alias-border-l2, rgba(128,128,128,.16)); }
+.dshwt-hdr-menu-err { padding: 6px 10px; font-size: 11.5px; line-height: 16px; color: var(--dsw-alias-state-error-primary, #cf222e); overflow-wrap: anywhere; }
 .dshwt-menuitem { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; font: inherit; font-size: 13px; text-align: left; background: none; border: none; border-radius: 6px; cursor: pointer; color: var(--dsw-alias-label-primary, inherit); }
 @media (hover: hover) { .dshwt-menuitem:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.12)); } }
 .dshwt-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; }
@@ -1328,17 +1436,20 @@ window.__ModuleLoader__.load({
 `
 
     /** ---- crisp inline SVG icons ---- */
-    function BranchIcon({ size = 15 }) {
+    function BranchIcon({ size = 16 }) {
+      if (typeof NativePrimitives?.IconBranchOutlineRegular === 'function') {
+        return h(NativePrimitives.IconBranchOutlineRegular, { size })
+      }
       return h('svg', {
         viewBox: '0 0 24 24', width: size, height: size,
-        fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round', strokeLinejoin: 'round',
+        fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round',
         'aria-hidden': true,
         style: { display: 'block', flexShrink: 0 },
       },
-      h('circle', { cx: 6, cy: 6, r: 2.5 }),
-      h('circle', { cx: 6, cy: 18, r: 2.5 }),
-      h('circle', { cx: 18, cy: 8, r: 2.5 }),
-      h('path', { d: 'M6 8.5v7M18 10.5c0 4-3 5.5-12 5.5' }))
+      h('circle', { cx: 7, cy: 6, r: 2.25 }),
+      h('circle', { cx: 7, cy: 18, r: 2.25 }),
+      h('circle', { cx: 17, cy: 7, r: 2.25 }),
+      h('path', { d: 'M7 8.25v7.5M17 9.25V10c0 2.75-2.25 4.75-5 4.75H7' }))
     }
     function RefreshIcon({ size = 14 }) {
       return h('span', { className: 'dshwt-icon', 'aria-hidden': true },
@@ -1443,6 +1554,34 @@ window.__ModuleLoader__.load({
         'aria-hidden': true,
       }, h('polyline', { points: '20 6 9 17 4 12' }))
     }
+    function StopIcon({ size = 15 }) {
+      return h('svg', {
+        viewBox: '0 0 24 24', width: size, height: size,
+        fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true,
+      }, h('rect', { x: 4.5, y: 4.5, width: 15, height: 15, rx: 3 }))
+    }
+    function CloseIcon({ size = 15 }) {
+      return h('svg', {
+        viewBox: '0 0 24 24', width: size, height: size,
+        fill: 'none', stroke: 'currentColor', strokeWidth: 1.85, strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true,
+      },
+      h('line', { x1: 5.5, y1: 5.5, x2: 18.5, y2: 18.5 }),
+      h('line', { x1: 18.5, y1: 5.5, x2: 5.5, y2: 18.5 }))
+    }
+    function CollapseIcon({ dir = 'down', size = 16 }) {
+      return h('svg', {
+        viewBox: '0 0 24 24', width: size, height: size,
+        fill: 'none', stroke: 'currentColor', strokeWidth: 1.85, strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true,
+      }, h('polyline', { points: dir === 'up' ? '6 15 12 9 18 15' : '6 9 12 15 18 9' }))
+    }
+
+    function stripAnsi(text) {
+      if (typeof text !== 'string') return ''
+      return text.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])/g, '')
+    }
 
     function shortRepo(root) {
       if (typeof root !== 'string') return ''
@@ -1511,19 +1650,24 @@ window.__ModuleLoader__.load({
       return { config, update, refresh }
     }
 
-    /** ---- Live SSE operation log drawer ---- */
-    function LogDrawer({ operationId, label, inline = false, onClose, onSettled, t }) {
+    /** ---- Shared SSE operation stream hook ---- */
+    function useOperationStream(operationId, label, onSettled) {
       const [lines, setLines] = useState([])
       const [status, setStatus] = useState('running')
       const [opLabel, setOpLabel] = useState(label ?? '')
-      const [copied, setCopied] = useState(false)
-      const boxRef = useRef(null)
       const settledRef = useRef(onSettled)
       settledRef.current = onSettled
 
       useEffect(() => {
+        if (!operationId) {
+          setLines([])
+          setStatus('succeeded')
+          setOpLabel(label ?? '')
+          return
+        }
         setLines([])
         setStatus('running')
+        setOpLabel(label ?? '')
         const source = new EventSource(`${API}/operations/${enc(operationId)}/stream`)
         source.onmessage = (event) => {
           try {
@@ -1548,33 +1692,289 @@ window.__ModuleLoader__.load({
         return () => source.close()
       }, [operationId])
 
-      useEffect(() => {
-        boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight })
-      }, [lines])
+      return { lines, status, opLabel }
+    }
 
-      const tone = status === 'succeeded' ? 'ok' : status === 'failed' ? 'err' : status === 'running' ? 'warn' : 'off'
+    /** ---- Live SSE operation log drawer (fallback overlay when right sidebar is absent) ---- */
+    function LogDrawer({ operationId, label, icon, minimized = false, onToggleMinimize, onClose, onSettled, t }) {
+      const { lines, status, opLabel } = useOperationStream(operationId, label, onSettled)
+      const [copied, setCopied] = useState(false)
+      const boxRef = useRef(null)
+      const stickRef = useRef(true)
+
+      useEffect(() => { stickRef.current = true }, [operationId])
+      useEffect(() => {
+        if (minimized || !stickRef.current) return
+        const el = boxRef.current
+        if (el) el.scrollTo({ top: el.scrollHeight })
+      }, [lines, minimized])
+
+      const onScroll = () => {
+        const el = boxRef.current
+        if (!el) return
+        stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+      }
+
       const copyAll = () => {
-        copyText(lines.map(l => l.text).join(''))
+        copyText(lines.map(l => stripAnsi(l.text)).join(''))
         setCopied(true)
         setTimeout(() => setCopied(false), 1500)
       }
 
-      return h('div', { className: inline ? 'dshwt-drawer dshwt-drawer-inline' : 'dshwt-drawer', role: 'region', 'aria-label': t('logs.title') },
-        h('div', { className: 'dshwt-drawer-head' },
-          h('span', { className: 'dshwt-drawer-title', title: opLabel }, opLabel || t('logs.title')),
-          h('span', { className: 'dshwt-tag', 'data-tone': tone },
-            status === 'running' ? h('span', { className: 'dshwt-tag-pulse' }) : null,
-            t(`logs.status.${status}`) || status),
-          h('span', { className: 'dshwt-spacer' }),
-          h('button', { className: 'dshwt-btn dshwt-btn-sm dshwt-btn-ghost', onClick: copyAll }, copied ? t('logs.copied') : t('logs.copy')),
+      const statusText = t(`logs.status.${status}`) || status
+
+      return h('div', {
+        className: minimized ? 'dshwt-drawer dshwt-drawer-min' : 'dshwt-drawer',
+        role: 'region',
+        'aria-label': opLabel || t('logs.title'),
+      },
+      h('div', { className: 'dshwt-drawer-head' },
+        h('button', {
+          type: 'button',
+          className: 'dshwt-drawer-main',
+          title: minimized ? t('logs.expand') : (opLabel || t('logs.title')),
+          onClick: () => { if (minimized && onToggleMinimize) onToggleMinimize() },
+        },
+        h('span', { className: 'dshwt-log-dot', 'data-status': status, 'aria-hidden': true }),
+        icon ? h('span', { style: { color: 'var(--dsw-alias-label-secondary, #57606a)', display: 'inline-flex', flex: 'none' } },
+          h(ActionIcon, { kind: icon, size: 15, outline: true })) : null,
+        h('span', { className: 'dshwt-drawer-title' }, opLabel || t('logs.title')),
+        h('span', { className: 'dshwt-drawer-sep', 'aria-hidden': true }),
+        h('span', { className: 'dshwt-drawer-status', 'data-status': status }, statusText)),
+        h('div', { className: 'dshwt-drawer-acts' },
           status === 'running'
-            ? h('button', { className: 'dshwt-btn dshwt-btn-sm dshwt-btn-danger', onClick: () => void api(`/operations/${enc(operationId)}/cancel`, { method: 'POST' }) }, t('logs.cancel'))
+            ? h(Hint, { label: t('logs.cancel'), side: 'bottom' },
+              h('button', {
+                type: 'button',
+                className: 'dshwt-icon-btn dshwt-icon-btn-danger',
+                title: hasNativeTooltip ? undefined : t('logs.cancel'),
+                'aria-label': t('logs.cancel'),
+                onClick: () => void api(`/operations/${enc(operationId)}/cancel`, { method: 'POST' }),
+              }, h(StopIcon, { size: 15 })))
             : null,
-          h('button', { className: 'dshwt-btn dshwt-btn-sm dshwt-btn-ghost', onClick: onClose }, t('logs.close'))),
-        h('div', { className: 'dshwt-drawer-body', ref: boxRef },
-          lines.length === 0
-            ? h('span', { 'data-stream': 'meta' }, t('logs.empty'))
-            : lines.map((entry, idx) => h('span', { key: idx, 'data-stream': entry.stream }, entry.text))))
+          !minimized
+            ? h(Hint, { label: copied ? t('logs.copied') : t('logs.copy'), side: 'bottom' },
+              h('button', {
+                type: 'button',
+                className: 'dshwt-icon-btn',
+                title: hasNativeTooltip ? undefined : (copied ? t('logs.copied') : t('logs.copy')),
+                'aria-label': copied ? t('logs.copied') : t('logs.copy'),
+                onClick: copyAll,
+              }, copied ? h(CheckIcon, { size: 15 }) : h(CopyIcon, { size: 15 })))
+            : null,
+          onToggleMinimize
+            ? h(Hint, { label: minimized ? t('logs.expand') : t('logs.minimize'), side: 'bottom' },
+              h('button', {
+                type: 'button',
+                className: 'dshwt-icon-btn',
+                title: hasNativeTooltip ? undefined : (minimized ? t('logs.expand') : t('logs.minimize')),
+                'aria-label': minimized ? t('logs.expand') : t('logs.minimize'),
+                'aria-expanded': !minimized,
+                onClick: onToggleMinimize,
+              }, h(CollapseIcon, { dir: minimized ? 'down' : 'up', size: 16 })))
+            : null,
+          h(Hint, { label: t('logs.close'), side: 'bottom' },
+            h('button', {
+              type: 'button',
+              className: 'dshwt-icon-btn',
+              title: hasNativeTooltip ? undefined : t('logs.close'),
+              'aria-label': t('logs.close'),
+              onClick: onClose,
+            }, h(CloseIcon, { size: 15 }))))),
+      !minimized
+        ? h('div', { className: 'dshwt-drawer-body-wrap' },
+          h('div', { className: 'dshwt-drawer-body', ref: boxRef, onScroll },
+            lines.length === 0
+              ? h('span', { 'data-stream': 'meta' }, t('logs.empty'))
+              : lines.map((entry, idx) => h('span', { key: idx, 'data-stream': entry.stream }, stripAnsi(entry.text)))))
+        : null)
+    }
+
+    function LogDrawerOverlay() {
+      const { t } = useLocale()
+      const drawer = useLogDrawerState()
+      if (!drawer.open || drawer.op === null) return null
+      return h(LogDrawer, {
+        operationId: drawer.op.id,
+        label: drawer.op.label,
+        icon: drawer.op.icon,
+        minimized: drawer.minimized,
+        onToggleMinimize: toggleMinimizeLogDrawer,
+        onClose: closeLogDrawer,
+        onSettled: () => notifyEnvChanged(),
+        t,
+      })
+    }
+
+    /** ---- Right-sidebar Action Log tab (`sidebar.right.pane.tab`, opened on demand from top bar) ---- */
+    function ActionLogTabTitle(props) {
+      const { t } = useLocale()
+      const sessionId = props?.sessionId ?? '__global__'
+      const bucket = useSessionLogs(sessionId)
+      const current = bucket.ops.find(o => o.id === bucket.activeId) ?? bucket.ops[0] ?? null
+      const title = current?.actionName || current?.label || t('logs.title')
+      return h('span', { className: 'dshwt-rtab-title' },
+        current?.icon
+          ? h(ActionIcon, { kind: current.icon, size: 15, outline: true })
+          : h(CodeIcon, { size: 15 }),
+        h('span', { className: 'dshwt-rtab-label' }, title))
+    }
+
+    function ActionLogPane(ctx) {
+      return function LogTabBody(props) {
+        const { t } = useLocale()
+        const sessionId = props?.sessionId ?? '__global__'
+        const bucket = useSessionLogs(sessionId)
+        const current = bucket.ops.find(o => o.id === bucket.activeId) ?? bucket.ops[0] ?? null
+        const [rerunning, setRerunning] = useState(false)
+        const [copied, setCopied] = useState(false)
+        const boxRef = useRef(null)
+        const stickRef = useRef(true)
+
+        // Hydrate running backend ops if the tab survived a page reload
+        useEffect(() => {
+          if (bucket.ops.length > 0 || sessionId === '__global__') return
+          const summary = ctx.get('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId]
+          const cwd = extractSummaryCwd(summary)
+          const params = [`sessionId=${enc(sessionId)}`]
+          if (typeof cwd === 'string' && cwd.length > 0) params.push(`cwd=${enc(cwd)}`)
+          void api(`/session-actions?${params.join('&')}`).then((value) => {
+            const running = value?.activeOperations ?? []
+            const actions = value?.actions ?? []
+            for (const op of running) {
+              const matched = actions.find(a => a.name === op.actionName)
+              recordSessionOp(sessionId, {
+                id: op.id,
+                label: op.label,
+                actionName: op.actionName ?? null,
+                icon: matched?.icon ?? 'tool',
+                cwd: value?.cwd ?? cwd ?? null,
+              })
+            }
+          }).catch(() => {})
+        }, [sessionId, bucket.ops.length])
+
+        const { lines, status, opLabel } = useOperationStream(
+          current?.id ?? null,
+          current?.label ?? '',
+          () => notifyEnvChanged(),
+        )
+
+        useEffect(() => { stickRef.current = true }, [current?.id])
+        useEffect(() => {
+          if (!stickRef.current) return
+          const el = boxRef.current
+          if (el) el.scrollTo({ top: el.scrollHeight })
+        }, [lines])
+
+        const onScroll = () => {
+          const el = boxRef.current
+          if (!el) return
+          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+        }
+
+        const copyAll = () => {
+          copyText(lines.map(l => stripAnsi(l.text)).join(''))
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        }
+
+        const rerun = async () => {
+          if (!current?.actionName || rerunning) return
+          setRerunning(true)
+          try {
+            const result = await api('/actions/run', {
+              method: 'POST',
+              body: JSON.stringify({
+                sessionId: sessionId !== '__global__' ? sessionId : undefined,
+                cwd: current.cwd ?? undefined,
+                action: current.actionName,
+              }),
+            })
+            if (result?.operationId) {
+              recordSessionOp(sessionId, {
+                id: result.operationId,
+                label: current.label,
+                actionName: current.actionName,
+                icon: current.icon,
+                cwd: current.cwd,
+              })
+              notifyEnvChanged()
+            }
+          } catch {
+            // ignore transient rerun errors
+          } finally {
+            setRerunning(false)
+          }
+        }
+
+        if (current === null) {
+          return h('div', { className: 'dshwt-rlog' },
+            h('div', { className: 'dshwt-rlog-empty' }, t('logs.empty')))
+        }
+
+        const statusText = t(`logs.status.${status}`) || status
+
+        return h('div', { className: 'dshwt-rlog', role: 'region', 'aria-label': opLabel || t('logs.title') },
+          h('div', { className: 'dshwt-rlog-head' },
+            h('div', { className: 'dshwt-drawer-main', title: opLabel || t('logs.title') },
+              h('span', { className: 'dshwt-log-dot', 'data-status': status, 'aria-hidden': true }),
+              current.icon
+                ? h('span', { style: { color: 'var(--dsw-alias-label-secondary, #57606a)', display: 'inline-flex', flex: 'none' } },
+                  h(ActionIcon, { kind: current.icon, size: 15, outline: true }))
+                : null,
+              h('span', { className: 'dshwt-drawer-title' }, opLabel || t('logs.title')),
+              h('span', { className: 'dshwt-drawer-sep', 'aria-hidden': true }),
+              h('span', { className: 'dshwt-drawer-status', 'data-status': status }, statusText)),
+            h('div', { className: 'dshwt-drawer-acts' },
+              status === 'running'
+                ? h(Hint, { label: t('logs.cancel'), side: 'bottom' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dshwt-icon-btn dshwt-icon-btn-danger',
+                    title: hasNativeTooltip ? undefined : t('logs.cancel'),
+                    'aria-label': t('logs.cancel'),
+                    onClick: () => void api(`/operations/${enc(current.id)}/cancel`, { method: 'POST' }),
+                  }, h(StopIcon, { size: 15 })))
+                : current.actionName
+                  ? h(Hint, { label: t('logs.rerun'), side: 'bottom' },
+                    h('button', {
+                      type: 'button',
+                      className: `dshwt-icon-btn ${rerunning ? 'dshwt-spin' : ''}`,
+                      disabled: rerunning,
+                      title: hasNativeTooltip ? undefined : t('logs.rerun'),
+                      'aria-label': t('logs.rerun'),
+                      onClick: () => void rerun(),
+                    }, h(RefreshIcon, { size: 15 })))
+                  : null,
+              h(Hint, { label: copied ? t('logs.copied') : t('logs.copy'), side: 'bottom' },
+                h('button', {
+                  type: 'button',
+                  className: 'dshwt-icon-btn',
+                  title: hasNativeTooltip ? undefined : (copied ? t('logs.copied') : t('logs.copy')),
+                  'aria-label': copied ? t('logs.copied') : t('logs.copy'),
+                  onClick: copyAll,
+                }, copied ? h(CheckIcon, { size: 15 }) : h(CopyIcon, { size: 15 }))))),
+          bucket.ops.length > 1
+            ? h('div', { className: 'dshwt-rlog-runs', role: 'tablist' },
+              bucket.ops.map(op => h('button', {
+                key: op.id,
+                type: 'button',
+                role: 'tab',
+                className: 'dshwt-rlog-run',
+                'aria-selected': op.id === current.id,
+                title: op.label,
+                onClick: () => selectSessionOp(sessionId, op.id),
+              },
+              op.icon ? h(ActionIcon, { kind: op.icon, size: 13, outline: true }) : null,
+              h('span', null, op.actionName || op.label))))
+            : null,
+          h('div', { className: 'dshwt-rlog-body-wrap' },
+            h('div', { className: 'dshwt-drawer-body', ref: boxRef, onScroll },
+              lines.length === 0
+                ? h('span', { 'data-stream': 'meta' }, t('logs.empty'))
+                : lines.map((entry, idx) => h('span', { key: idx, 'data-stream': entry.stream }, stripAnsi(entry.text))))))
+      }
     }
 
     /** ---- Native DSH Modals ---- */
@@ -1588,72 +1988,6 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dshwt-modal', role: 'dialog', 'aria-modal': true, 'aria-label': title },
           h('h3', { className: 'dshwt-modal-title' }, title),
           children))
-    }
-
-    function ApplyPatchModal({ item, t, onClose, onApplied }) {
-      const [mode, setMode] = useState('branch')
-      const [precheck, setPrecheck] = useState({ loading: true, result: null, error: null })
-      const [applying, setApplying] = useState(false)
-
-      useEffect(() => {
-        let cancelled = false
-        setPrecheck({ loading: true, result: null, error: null })
-        void api(`/worktrees/${enc(item.id)}/apply-patch`, {
-          method: 'POST',
-          body: JSON.stringify({ mode, dryRun: true }),
-        }).then(
-          (result) => { if (!cancelled) setPrecheck({ loading: false, result, error: null }) },
-          (err) => { if (!cancelled) setPrecheck({ loading: false, result: null, error: err.message }) },
-        )
-        return () => { cancelled = true }
-      }, [item.id, mode])
-
-      const submit = async () => {
-        setApplying(true)
-        try {
-          const result = await api(`/worktrees/${enc(item.id)}/apply-patch`, {
-            method: 'POST',
-            body: JSON.stringify({ mode, dryRun: false }),
-          })
-          onApplied(result)
-          onClose()
-        } catch (err) {
-          setPrecheck(prev => ({ ...prev, error: err.message }))
-        } finally {
-          setApplying(false)
-        }
-      }
-
-      const conflicts = precheck.result?.conflicts ?? []
-      const fileCount = precheck.result?.fileCount ?? 0
-      const canApply = !precheck.loading && !applying && precheck.error === null && conflicts.length === 0 && fileCount > 0
-
-      return h(ModalShell, { title: t('modal.apply.title'), onClose },
-        h('p', { className: 'dshwt-modal-desc' }, t('modal.apply.desc', { branch: item.branch })),
-        h('div', { className: 'dshwt-field' },
-          h('span', { className: 'dshwt-label' }, t('modal.apply.modeLabel')),
-          h('label', { className: 'dshwt-radio-card', 'data-selected': mode === 'branch' },
-            h('input', { type: 'radio', name: 'applyMode', checked: mode === 'branch', onChange: () => setMode('branch') }),
-            h('span', null, t('modal.apply.modeBranch'))),
-          h('label', { className: 'dshwt-radio-card', 'data-selected': mode === 'uncommitted' },
-            h('input', { type: 'radio', name: 'applyMode', checked: mode === 'uncommitted', onChange: () => setMode('uncommitted') }),
-            h('span', null, t('modal.apply.modeUncommitted')))),
-        precheck.loading
-          ? h('div', { className: 'dshwt-banner', 'data-tone': 'info' }, t('modal.apply.checking'))
-          : precheck.error !== null
-            ? h('div', { className: 'dshwt-banner', 'data-tone': 'err' }, precheck.error)
-            : conflicts.length > 0
-              ? h('div', { className: 'dshwt-banner', 'data-tone': 'err' },
-                h('div', null,
-                  h('div', { style: { fontWeight: 600, marginBottom: 4 } }, t('modal.apply.conflict')),
-                  conflicts.map((c, i) => h('div', { key: i, style: { fontFamily: 'var(--ds-font-family-code, Menlo, monospace)', fontSize: 11.5 } }, `• ${c}`))))
-              : fileCount === 0
-                ? h('div', { className: 'dshwt-banner', 'data-tone': 'warn' }, t('modal.apply.noChanges'))
-                : h('div', { className: 'dshwt-banner', 'data-tone': 'ok' }, t('modal.apply.ready', { count: fileCount })),
-        h('div', { className: 'dshwt-modal-foot' },
-          h('button', { className: 'dshwt-btn', onClick: onClose }, t('modal.cancel')),
-          h('button', { className: 'dshwt-btn dshwt-btn-primary', disabled: !canApply, onClick: () => void submit() },
-            applying ? t('panel.act.busy') : t('modal.apply.submit'))))
     }
 
     function ConfirmModal({ title, desc, submitLabel, danger = false, onClose, onConfirm, t }) {
@@ -1765,13 +2099,14 @@ window.__ModuleLoader__.load({
               h('span', { className: 'dshwt-code-lang' },
                 h(CodeIcon, { size: 14 }),
                 platform === 'win32' ? 'text' : 'bash'),
-              h('button', {
-                type: 'button',
-                className: 'dshwt-icon-btn',
-                title: copied ? t('env.copied') : t('env.copy'),
-                'aria-label': copied ? t('env.copied') : t('env.copy'),
-                onClick: doCopy,
-              }, copied ? h('span', { style: { fontSize: 12 } }, '✓') : h(CopyIcon, { size: 14 }))),
+              h(Hint, { label: copied ? t('env.copied') : t('env.copy'), side: 'top' },
+                h('button', {
+                  type: 'button',
+                  className: 'dshwt-icon-btn',
+                  title: hasNativeTooltip ? undefined : (copied ? t('env.copied') : t('env.copy')),
+                  'aria-label': copied ? t('env.copied') : t('env.copy'),
+                  onClick: doCopy,
+                }, copied ? h(CheckIcon, { size: 14 }) : h(CopyIcon, { size: 14 })))),
             h('pre', { className: 'dshwt-code-pre' }, h('code', null, shown)))
           : h('div', { className: 'dshwt-env-empty-bar' },
             platform !== 'top' && hasAny ? t('env.noPlatformScript') : t('env.noScript')))
@@ -1871,14 +2206,15 @@ window.__ModuleLoader__.load({
                 disabled,
                 onClick: () => onChange({ ...action, platform: opt }),
               }, opt === null ? t('env.actionPlatformAll') : t(`env.platform.${opt}`))))),
-          h('button', {
-            type: 'button',
-            className: 'dshwt-icon-btn dshwt-icon-btn-danger',
-            title: t('env.removeAction'),
-            'aria-label': t('env.removeAction'),
-            disabled,
-            onClick: onRemove,
-          }, h(TrashIcon, { size: 15 }))))
+          h(Hint, { label: t('env.removeAction'), side: 'top' },
+            h('button', {
+              type: 'button',
+              className: 'dshwt-icon-btn dshwt-icon-btn-danger',
+              title: hasNativeTooltip ? undefined : t('env.removeAction'),
+              'aria-label': t('env.removeAction'),
+              disabled,
+              onClick: onRemove,
+            }, h(TrashIcon, { size: 15 })))))
     }
 
     function EnvActionReadRow({ action, t }) {
@@ -2260,6 +2596,7 @@ window.__ModuleLoader__.load({
           onSaved: (writtenPath) => {
             void loadProjects()
             void data.refresh()
+            notifyEnvChanged()
             setView({ mode: 'detail', projectRoot: view.projectRoot, configPath: writtenPath })
           },
         })
@@ -2303,20 +2640,21 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'dshwt-env-copy' },
                       h('span', { className: 'dshwt-env-name' }, project.name),
                       project.owner ? h('span', { className: 'dshwt-env-sub' }, project.owner) : null)),
-                  h('button', {
-                    type: 'button',
-                    className: 'dshwt-pill-btn dshwt-pill-btn-icon',
-                    title: t('env.addEnvTo', { name: project.name }),
-                    'aria-label': t('env.addEnvTo', { name: project.name }),
-                    onClick: () => setView({
-                      mode: 'edit',
-                      projectRoot: project.root,
-                      projectName: project.name,
-                      configPath: project.nextConfigPath,
-                      isNew: true,
-                      initialEnv: null,
-                    }),
-                  }, h(PlusIcon, { size: 14 }))),
+                  h(Hint, { label: t('env.addEnvTo', { name: project.name }), side: 'top' },
+                    h('button', {
+                      type: 'button',
+                      className: 'dshwt-pill-btn dshwt-pill-btn-icon',
+                      title: hasNativeTooltip ? undefined : t('env.addEnvTo', { name: project.name }),
+                      'aria-label': t('env.addEnvTo', { name: project.name }),
+                      onClick: () => setView({
+                        mode: 'edit',
+                        projectRoot: project.root,
+                        projectName: project.name,
+                        configPath: project.nextConfigPath,
+                        isNew: true,
+                        initialEnv: null,
+                      }),
+                    }, h(PlusIcon, { size: 14 })))),
                 project.environments.length > 0
                   ? h('div', { className: 'dshwt-env-children' },
                     project.environments.map(env => {
@@ -2501,14 +2839,15 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dshwt-settings-section' },
         h('div', { className: 'dshwt-managed-head' },
           h('h3', { className: 'dshwt-settings-group-title' }, t('settings.managed.title')),
-          h('button', {
-            type: 'button',
-            className: `dshwt-icon-btn ${loading ? 'dshwt-spin' : ''}`,
-            disabled: loading,
-            title: t('settings.managed.refresh'),
-            'aria-label': t('settings.managed.refresh'),
-            onClick: () => void refresh(),
-          }, h(RefreshIcon, { size: 15 }))),
+          h(Hint, { label: t('settings.managed.refresh'), side: 'top' },
+            h('button', {
+              type: 'button',
+              className: `dshwt-icon-btn ${loading ? 'dshwt-spin' : ''}`,
+              disabled: loading,
+              title: hasNativeTooltip ? undefined : t('settings.managed.refresh'),
+              'aria-label': t('settings.managed.refresh'),
+              onClick: () => void refresh(),
+            }, h(RefreshIcon, { size: 15 })))),
         error ? h('div', { className: 'dshwt-setting-err', role: 'alert', style: { paddingTop: 8 } },
           typeof error === 'object' && error.code === 'SESSION_SERVICE_UNAVAILABLE' ? t('error.sessionUnavailable') : (error.message ?? error)) : null,
         grouped.length === 0
@@ -2535,25 +2874,27 @@ window.__ModuleLoader__.load({
                         h('div', { className: 'dshwt-managed-name' }, item.branch),
                         h('div', { className: 'dshwt-managed-path', title: item.path }, item.path)),
                       h('div', { className: 'dshwt-managed-acts' },
-                        h('button', {
-                          type: 'button',
-                          className: 'dshwt-icon-btn',
-                          disabled: rowBusy,
-                          title: t('settings.managed.newChat'),
-                          'aria-label': t('settings.managed.newChat'),
-                          onClick: () => void startChat(item),
-                        }, h(ChatPlusIcon, { size: 16 })),
-                        h('button', {
-                          type: 'button',
-                          className: 'dshwt-icon-btn dshwt-icon-btn-danger',
-                          disabled: rowBusy,
-                          title: t('settings.managed.delete'),
-                          'aria-label': t('settings.managed.delete'),
-                          onClick: () => {
-                            if (confirmBeforeDelete) setPendingDelete(item)
-                            else void removeWorktree(item).catch(() => {})
-                          },
-                        }, h(TrashIcon, { size: 15 }))))
+                        h(Hint, { label: t('settings.managed.newChat'), side: 'top' },
+                          h('button', {
+                            type: 'button',
+                            className: 'dshwt-icon-btn',
+                            disabled: rowBusy,
+                            title: hasNativeTooltip ? undefined : t('settings.managed.newChat'),
+                            'aria-label': t('settings.managed.newChat'),
+                            onClick: () => void startChat(item),
+                          }, h(ChatPlusIcon, { size: 16 }))),
+                        h(Hint, { label: t('settings.managed.delete'), side: 'top' },
+                          h('button', {
+                            type: 'button',
+                            className: 'dshwt-icon-btn dshwt-icon-btn-danger',
+                            disabled: rowBusy,
+                            title: hasNativeTooltip ? undefined : t('settings.managed.delete'),
+                            'aria-label': t('settings.managed.delete'),
+                            onClick: () => {
+                              if (confirmBeforeDelete) setPendingDelete(item)
+                              else void removeWorktree(item).catch(() => {})
+                            },
+                          }, h(TrashIcon, { size: 15 })))))
                   }))
                 : null)
           }),
@@ -2735,120 +3076,431 @@ window.__ModuleLoader__.load({
             : h(EnvironmentsTab, { t, data })))
     }
 
-    /** ---- Right-sidebar tab body ---- */
-    function RightPane() {
-      const { t } = useLocale()
-      const { items, loading, refresh } = useWorktrees()
-      const { config } = usePluginConfig()
-      const [modal, setModal] = useState(null)
-      const [logOp, setLogOp] = useState(null)
-      const active = (items ?? []).filter(item => item.status === 'active' && item.exists)
-
-      return h('div', { className: 'dshwt-pane' },
-        h(StyleTag),
-        h('div', { className: 'dshwt-pane-head' },
-          h(BranchIcon, { size: 15 }),
-          h('strong', { style: { fontSize: 13 } }, t('tab.title')),
-          h('span', { className: 'dshwt-spacer' }),
-          h('button', { className: `dshwt-btn dshwt-btn-sm dshwt-btn-ghost ${loading ? 'dshwt-spin' : ''}`, onClick: () => void refresh(), title: t('tab.refresh') },
-            h(RefreshIcon, { size: 13 }))),
-        active.length === 0
-          ? h('div', { className: 'dshwt-empty', style: { padding: '28px 14px' } },
-            h('div', { className: 'dshwt-empty-title' }, t('tab.empty')),
-            h('div', { className: 'dshwt-empty-hint' }, t('tab.emptyHint')))
-          : active.map(item => h(RightCard, {
-            key: item.id, item, t, refresh,
-            confirmBeforeDelete: config.confirmBeforeDelete !== false,
-            onOpenLog: (id, label) => setLogOp({ id, label }),
-            onModal: setModal,
-          })),
-        logOp !== null
-          ? h(LogDrawer, {
-            operationId: logOp.id,
-            label: logOp.label,
-            inline: true,
-            onClose: () => setLogOp(null),
-            onSettled: () => void refresh(),
-            t,
-          })
-          : null,
-        modal?.kind === 'apply'
-          ? h(ApplyPatchModal, { item: modal.item, t, onClose: () => setModal(null), onApplied: () => void refresh() })
-          : null,
-        modal?.kind === 'archive'
-          ? h(ConfirmModal, {
-            title: t('modal.archive.title'),
-            desc: t('modal.archive.desc', { branch: modal.item.branch }),
-            submitLabel: t('modal.archive.submit'),
-            onClose: () => setModal(null),
-            onConfirm: async () => {
-              await api(`/worktrees/${enc(modal.item.id)}/archive`, { method: 'POST', body: JSON.stringify({}) })
-              await refresh()
-            },
-            t,
-          })
-          : null)
+    /** ---- Session top-bar quick actions (`conversation.session.header.utilities`) ---- */
+    function extractDirPath(value) {
+      if (typeof value === 'string' && value.length > 0) return value
+      if (value && typeof value === 'object') {
+        if (typeof value.path === 'string' && value.path.length > 0) return value.path
+        if (typeof value.cwd === 'string' && value.cwd.length > 0) return value.cwd
+      }
+      return null
     }
 
-    function RightCard({ item, t, refresh, confirmBeforeDelete, onOpenLog, onModal }) {
-      const [busy, setBusy] = useState(false)
-      const [note, setNote] = useState(null)
+    function extractSummaryCwd(summary) {
+      if (summary === undefined || summary === null) return null
+      return extractDirPath(summary.projectionValues?.workingDirectory)
+        ?? extractDirPath(summary.projectionValues?.forgeWorktree)
+        ?? extractDirPath(summary.projections?.workingDirectory)
+        ?? extractDirPath(summary.cwd)
+        ?? extractDirPath(summary.workspacePath)
+    }
 
-      const startAction = async (name) => {
-        setBusy(true)
-        setNote(null)
-        try {
-          const result = await api(`/worktrees/${enc(item.id)}/actions/${enc(name)}/run`, { method: 'POST' })
-          if (result?.operationId) onOpenLog(result.operationId, `${item.branch} · ${name}`)
-        } catch (e) {
-          setNote({ tone: 'err', text: e.message })
-        } finally {
-          setBusy(false)
+    /** ---- Native DSH terminal launcher (preferred runner when persistent terminal is enabled) ---- */
+    function posixQuote(value) {
+      return `'${String(value).replace(/'/g, `'\\''`)}'`
+    }
+
+    function psQuote(value) {
+      return `'${String(value).replace(/'/g, `''`)}'`
+    }
+
+    function buildTerminalCommand(command, info, termCwd, shellName = '') {
+      const cmd = String(command ?? '').replace(/\r\n/g, '\n').trimEnd()
+      const lowerShell = String(shellName).toLowerCase()
+      const isPowerShell = lowerShell.includes('powershell') || lowerShell.includes('pwsh')
+      const isCmd = lowerShell === 'cmd' || lowerShell.endsWith('cmd.exe')
+      const needsEnvVars = /(?:DSH|CODEX)_(?:SOURCE_TREE_PATH|WORKTREE_PATH|WORKTREE_BRANCH)\b/.test(cmd)
+      const targetCwd = typeof info?.cwd === 'string' && info.cwd.length > 0 ? info.cwd : null
+      const needsCd = targetCwd !== null && typeof termCwd === 'string' && termCwd.length > 0 && termCwd !== targetCwd
+      const sourceRoot = info?.repositoryRoot ?? targetCwd ?? ''
+      const worktreePath = targetCwd ?? ''
+      const branch = info?.branch ?? ''
+      const prefixes = []
+
+      if (isPowerShell) {
+        if (needsCd) prefixes.push(`Set-Location -LiteralPath ${psQuote(targetCwd)}`)
+        if (needsEnvVars) {
+          prefixes.push(`$env:DSH_SOURCE_TREE_PATH=${psQuote(sourceRoot)}; $env:CODEX_SOURCE_TREE_PATH=${psQuote(sourceRoot)}; $env:DSH_WORKTREE_PATH=${psQuote(worktreePath)}; $env:CODEX_WORKTREE_PATH=${psQuote(worktreePath)}; $env:DSH_WORKTREE_BRANCH=${psQuote(branch)}`)
         }
+        return prefixes.length > 0 ? `${prefixes.join('; ')}; ${cmd}` : cmd
       }
 
-      const startSetup = async () => {
-        setBusy(true)
-        setNote(null)
-        try {
-          const result = await api(`/worktrees/${enc(item.id)}/setup?async=1`, { method: 'POST', body: JSON.stringify({ async: true }) })
-          if (result?.operationId) onOpenLog(result.operationId, `${item.branch} · setup`)
-          await refresh()
-        } catch (e) {
-          setNote({ tone: 'err', text: e.message })
-        } finally {
-          setBusy(false)
+      if (isCmd) {
+        if (needsCd) prefixes.push(`cd /d "${targetCwd}"`)
+        if (needsEnvVars) {
+          prefixes.push(`set "DSH_SOURCE_TREE_PATH=${sourceRoot}" && set "CODEX_SOURCE_TREE_PATH=${sourceRoot}" && set "DSH_WORKTREE_PATH=${worktreePath}" && set "CODEX_WORKTREE_PATH=${worktreePath}" && set "DSH_WORKTREE_BRANCH=${branch}"`)
         }
+        return prefixes.length > 0 ? `${prefixes.join(' && ')} && ${cmd}` : cmd
       }
 
-      const setupLabel = t(`panel.setup.${item.setupState ?? 'not-configured'}`) || item.setupState
+      // POSIX shells (zsh / bash / sh / fish-compatible basic export)
+      if (needsCd) prefixes.push(`cd ${posixQuote(targetCwd)}`)
+      if (typeof info?.envFile === 'string' && info.envFile.length > 0) {
+        prefixes.push(`. ${posixQuote(info.envFile)}`)
+      }
+      if (needsEnvVars) {
+        prefixes.push(`export DSH_SOURCE_TREE_PATH=${posixQuote(sourceRoot)} CODEX_SOURCE_TREE_PATH=${posixQuote(sourceRoot)} DSH_WORKTREE_PATH=${posixQuote(worktreePath)} CODEX_WORKTREE_PATH=${posixQuote(worktreePath)} DSH_WORKTREE_BRANCH=${posixQuote(branch)}`)
+      }
+      if (prefixes.length === 0) return cmd
+      return cmd.includes('\n') ? `${prefixes.join(' && ')}\n${cmd}` : `${prefixes.join(' && ')} && ${cmd}`
+    }
 
-      return h('div', { className: 'dshwt-pane-card' },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-          h('span', { className: 'dshwt-branch' }, item.branch),
-          h('span', { className: 'dshwt-spacer' }),
-          item.setupState && item.setupState !== 'not-configured'
-            ? h('span', { className: 'dshwt-tag', 'data-tone': setupTone(item.setupState) }, setupLabel)
-            : null),
-        h('div', { className: 'dshwt-group-path', title: item.path }, shortRepo(item.repositoryRoot)),
-        (item.actions?.length ?? 0) > 0
-          ? h('div', { className: 'dshwt-chips' },
-            item.actions.map(action => h('button', {
-              key: action.name, className: 'dshwt-action-pill', disabled: busy, title: action.command,
-              onClick: () => void startAction(action.name),
-            }, h(ActionIcon, { kind: action.icon }), action.name)))
-          : null,
-        h('div', { className: 'dshwt-card-ops' },
-          h('button', { className: 'dshwt-btn dshwt-btn-sm', disabled: busy, onClick: () => void startSetup() }, t('panel.act.setup')),
-          h('button', { className: 'dshwt-btn dshwt-btn-sm', disabled: busy, onClick: () => onModal({ kind: 'apply', item }) }, t('panel.act.apply')),
-          h('button', {
-            className: 'dshwt-btn dshwt-btn-sm', disabled: busy,
-            onClick: () => {
-              if (confirmBeforeDelete) onModal({ kind: 'archive', item })
-              else void api(`/worktrees/${enc(item.id)}/archive`, { method: 'POST', body: JSON.stringify({}) }).then(refresh, e => setNote({ tone: 'err', text: e.message }))
-            },
-          }, t('panel.act.archive'))),
-        note ? h('div', { className: 'dshwt-banner', 'data-tone': note.tone }, note.text) : null)
+    function canUseNativeTerminal(ctx, sessionId) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return false
+      const sidebarRight = ctx?.get?.('sidebarRight')
+      const sidebarRightTabs = ctx?.get?.('sidebarRightTabs')
+      const webTerminals = ctx?.get?.('webTerminals')
+      return sidebarRight !== undefined
+        && typeof sidebarRight.tabsIn === 'function'
+        && (typeof sidebarRight.openTabIn === 'function' || typeof sidebarRight.openTab === 'function')
+        && typeof sidebarRightTabs?.get === 'function'
+        && sidebarRightTabs.get('terminal') !== undefined
+        && webTerminals !== undefined
+        && typeof webTerminals.view === 'function'
+    }
+
+    async function runActionInNativeTerminal(ctx, sessionId, info, action) {
+      if (!canUseNativeTerminal(ctx, sessionId)) return false
+      const sidebarRight = ctx.get('sidebarRight')
+      const webTerminals = ctx.get('webTerminals')
+      const before = new Set((sidebarRight.tabsIn(sessionId) ?? []).map(tab => tab.id))
+      try {
+        if (typeof sidebarRight.openTabIn === 'function') sidebarRight.openTabIn(sessionId, 'terminal')
+        else sidebarRight.openTab('terminal')
+      } catch {
+        return false
+      }
+      const opened = (sidebarRight.tabsIn(sessionId) ?? []).find(tab => tab.kind === 'terminal' && !before.has(tab.id))
+      if (opened === undefined) return false
+
+      const contentId = sidebarRight.tabDomain?.occurrence?.(sessionId, { id: opened.id })?.navigation?.getSnapshot?.()?.address ?? opened.contentId
+      const termView = webTerminals.view(sessionId, opened.id, contentId)
+      if (termView === undefined || typeof termView.write !== 'function') return false
+
+      const ready = await new Promise((resolve) => {
+        const inspect = () => {
+          const st = termView.state?.getSnapshot?.()
+          if (!st) return null
+          if (st.phase === 'connected' && st.writable) return { ok: true, state: st }
+          if (st.phase === 'failed' || st.phase === 'closed') return { ok: false, state: st }
+          return null
+        }
+        const now = inspect()
+        if (now !== null) { resolve(now); return }
+        let settled = false
+        const finish = (result) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          try { unsub?.() } catch {}
+          resolve(result)
+        }
+        const unsub = termView.state?.subscribe?.(() => {
+          const next = inspect()
+          if (next !== null) finish(next)
+        })
+        const timer = setTimeout(() => finish({ ok: false, state: termView.state?.getSnapshot?.() }), 15000)
+      })
+
+      if (!ready.ok) {
+        try { sidebarRight.closeIn?.(sessionId, opened.id) } catch {}
+        return false
+      }
+
+      if (typeof termView.rename === 'function' && typeof action.name === 'string' && action.name.trim().length > 0) {
+        void Promise.resolve(termView.rename(action.name.trim())).catch(() => {})
+      }
+      trackNativeTerminal(ctx, sessionId, action.name, opened.id, contentId, termView)
+      const shellName = ready.state?.info?.shell?.name ?? ''
+      const payload = buildTerminalCommand(action.command ?? '', info, ready.state?.info?.cwd, shellName)
+      await new Promise(r => setTimeout(r, 140))
+      termView.write(`${payload}\r`, false)
+      return true
+    }
+
+    function SessionHeaderActions(ctx) {
+      return function HeaderActions(props) {
+        const { t } = useLocale()
+        const sessionId = props?.sessionId ?? props?.id ?? null
+        const sessionLogs = useSessionLogs(sessionId ?? '__global__')
+        const nativeRunning = useNativeTerminalActions(ctx, sessionId)
+        const summary = typeof props?.useSessions === 'function'
+          ? props.useSessions(state => (sessionId ? state?.byId?.[sessionId] : undefined))
+          : (sessionId ? ctx.get('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId] : undefined)
+        const cwd = props?.cwd ?? extractSummaryCwd(summary)
+
+        const [info, setInfo] = useState(null)
+        const [selectedName, setSelectedName] = useState(null)
+        const [menuOpen, setMenuOpen] = useState(false)
+        const [menuPos, setMenuPos] = useState(null)
+        const [starting, setStarting] = useState(false)
+        const [error, setError] = useState(null)
+        const [envTick, setEnvTick] = useState(0)
+
+        const wrapRef = useRef(null)
+        const menuRef = useRef(null)
+
+        useEffect(() => {
+          const bump = () => {
+            reconcileNativeTerminals(ctx)
+            setEnvTick(n => n + 1)
+          }
+          NS_STATE.envListeners.add(bump)
+          if (typeof window !== 'undefined') window.addEventListener('focus', bump)
+          return () => {
+            NS_STATE.envListeners.delete(bump)
+            if (typeof window !== 'undefined') window.removeEventListener('focus', bump)
+          }
+        }, [])
+
+        const refresh = useCallback(async () => {
+          if (!sessionId && !cwd) {
+            setInfo(null)
+            return
+          }
+          const params = []
+          if (typeof sessionId === 'string' && sessionId.length > 0) params.push(`sessionId=${enc(sessionId)}`)
+          if (typeof cwd === 'string' && cwd.length > 0) params.push(`cwd=${enc(cwd)}`)
+          try {
+            const value = await api(`/session-actions?${params.join('&')}`)
+            setInfo(value)
+          } catch {
+            // keep last known state on transient failure
+          }
+        }, [sessionId, cwd])
+
+        // Reset transient menu/error only when switching sessions — never on window focus or refresh!
+        useEffect(() => {
+          setMenuOpen(false)
+          setError(null)
+        }, [sessionId])
+
+        useEffect(() => {
+          void refresh()
+        }, [refresh, envTick])
+
+        useEffect(() => {
+          if (!menuOpen) return
+          const updatePos = () => {
+            const rect = wrapRef.current?.getBoundingClientRect?.()
+            if (!rect) return
+            const width = typeof window !== 'undefined' ? window.innerWidth : 1200
+            const right = Math.max(12, width - rect.right)
+            setMenuPos({ top: rect.bottom + 6, right })
+          }
+          updatePos()
+          const onPointerDown = (e) => {
+            if (wrapRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return
+            setMenuOpen(false)
+          }
+          const onKeyDown = (e) => {
+            if (e.key === 'Escape') setMenuOpen(false)
+          }
+          document.addEventListener('mousedown', onPointerDown)
+          document.addEventListener('keydown', onKeyDown)
+          window.addEventListener('resize', updatePos)
+          return () => {
+            document.removeEventListener('mousedown', onPointerDown)
+            document.removeEventListener('keydown', onKeyDown)
+            window.removeEventListener('resize', updatePos)
+          }
+        }, [menuOpen])
+
+        const actions = info?.actions ?? []
+        const activeOps = info?.activeOperations ?? []
+        const primary = actions.find(a => a.name === selectedName) ?? actions[0] ?? null
+        const runningOp = activeOps.find(op => op.status === 'running') ?? null
+
+        if (actions.length === 0) return null
+
+        const runAction = async (action, opts = {}) => {
+          if (!action) return
+          const forceNew = opts?.forceNew === true
+          setSelectedName(action.name)
+          setMenuOpen(false)
+          if (!forceNew && focusNativeTerminal(ctx, sessionId, action.name)) {
+            return
+          }
+          const existing = activeOps.find(op => op.actionName === action.name && op.status === 'running')
+          if (!forceNew && existing) {
+            openActionLog(ctx, sessionId, {
+              id: existing.id,
+              label: existing.label,
+              actionName: action.name,
+              icon: action.icon ?? 'tool',
+              cwd: info?.cwd ?? cwd ?? null,
+            })
+            return
+          }
+          setStarting(true)
+          setError(null)
+          try {
+            // Tier 1: prefer DSH's native interactive terminal when enabled
+            const ranInTerminal = await runActionInNativeTerminal(ctx, sessionId, info, action)
+            if (ranInTerminal) return
+
+            // Tier 2/3 fallback: run via plugin EnvRunner and stream to right-sidebar log tab (or overlay drawer)
+            const result = await api('/actions/run', {
+              method: 'POST',
+              body: JSON.stringify({
+                sessionId: sessionId ?? undefined,
+                cwd: info?.cwd ?? cwd ?? undefined,
+                action: action.name,
+              }),
+            })
+            if (result?.operationId) {
+              const scope = info?.branch || repoName(info?.cwd ?? cwd ?? '')
+              openActionLog(ctx, sessionId, {
+                id: result.operationId,
+                label: scope ? `${scope} · ${action.name}` : action.name,
+                actionName: action.name,
+                icon: action.icon ?? 'tool',
+                cwd: info?.cwd ?? cwd ?? null,
+              })
+            }
+            void refresh()
+          } catch (err) {
+            setError(err.message)
+            setMenuOpen(true)
+          } finally {
+            setStarting(false)
+          }
+        }
+
+        const primaryNativeRunning = primary !== null && nativeRunning.has(primary.name)
+        const primaryFallbackRunning = primary !== null && activeOps.some(op => op.actionName === primary.name && op.status === 'running')
+        const primaryRunning = primaryNativeRunning || primaryFallbackRunning
+        const anyRunning = runningOp !== null || nativeRunning.size > 0
+        const otherRunning = !primaryRunning && anyRunning
+        const primaryTitle = primary
+          ? (primaryNativeRunning
+            ? t('header.actions.focusTerminal', { name: primary.name })
+            : primaryFallbackRunning
+              ? t('header.actions.viewLogs')
+              : `${t('header.actions.run', { name: primary.name })} — ${primary.command}`)
+          : t('header.actions.menu')
+
+        const canShowLogsItem = runningOp !== null || sessionLogs.ops.length > 0
+
+        const menuPortal = menuOpen && menuPos !== null
+          ? portalToBody(h('div', {
+            ref: menuRef,
+            className: 'dshwt-hdr-menu',
+            role: 'menu',
+            'aria-label': t('header.actions.menu'),
+            style: { top: menuPos.top, right: menuPos.right },
+          },
+          actions.map((action, idx) => {
+            const isNativeRunning = nativeRunning.has(action.name)
+            const isFallbackRunning = activeOps.some(op => op.actionName === action.name && op.status === 'running')
+            const isRunning = isNativeRunning || isFallbackRunning
+            const firstLine = (action.command ?? '').trim().split(/\r?\n/)[0] ?? ''
+            return h('div', { key: `${action.name}-${idx}`, className: 'dshwt-hdr-menu-row' },
+              h('button', {
+                type: 'button',
+                role: 'menuitem',
+                className: 'dshwt-hdr-menu-item',
+                disabled: starting,
+                title: isNativeRunning ? t('header.actions.focusTerminal', { name: action.name }) : undefined,
+                onClick: () => void runAction(action),
+              },
+              h(ActionIcon, { kind: action.icon ?? 'tool', size: 16, outline: true }),
+              h('span', { className: 'dshwt-hdr-menu-copy' },
+                h('span', { className: 'dshwt-hdr-menu-name' }, action.name),
+                firstLine.length > 0 ? h('span', { className: 'dshwt-hdr-menu-cmd', title: action.command }, firstLine) : null),
+              isRunning ? h('span', { className: 'dshwt-hdr-dot', title: t('header.actions.running') }) : null),
+              isNativeRunning
+                ? h(Hint, { label: t('header.actions.runNewTerminal'), side: 'top' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dshwt-hdr-menu-new',
+                    disabled: starting,
+                    title: hasNativeTooltip ? undefined : t('header.actions.runNewTerminal'),
+                    'aria-label': t('header.actions.runNewTerminal'),
+                    onClick: (e) => {
+                      e.stopPropagation()
+                      void runAction(action, { forceNew: true })
+                    },
+                  }, h(PlusIcon, { size: 13 })))
+                : null)
+          }),
+          canShowLogsItem
+            ? h(React.Fragment, null,
+              h('div', { className: 'dshwt-hdr-menu-sep' }),
+              h('button', {
+                type: 'button',
+                role: 'menuitem',
+                className: 'dshwt-hdr-menu-item',
+                onClick: () => {
+                  if (runningOp !== null) {
+                    const matched = actions.find(a => a.name === runningOp.actionName)
+                    openActionLog(ctx, sessionId, {
+                      id: runningOp.id,
+                      label: runningOp.label,
+                      actionName: runningOp.actionName ?? null,
+                      icon: matched?.icon ?? 'tool',
+                      cwd: info?.cwd ?? cwd ?? null,
+                    })
+                  } else if (sessionLogs.ops.length > 0) {
+                    const target = sessionLogs.ops.find(o => o.id === sessionLogs.activeId) ?? sessionLogs.ops[0]
+                    openActionLog(ctx, sessionId, target)
+                  }
+                  setMenuOpen(false)
+                },
+              },
+              h(CodeIcon, { size: 15 }),
+              h('span', { className: 'dshwt-hdr-menu-name' }, t('header.actions.viewLogs'))))
+            : null,
+          error !== null ? h('div', { className: 'dshwt-hdr-menu-err', role: 'alert' }, error) : null))
+          : null
+
+        return h('div', { className: 'dshwt-hdr-wrap', ref: wrapRef },
+          actions.length === 1 && primary !== null
+            ? h(Hint, { label: primaryTitle, side: 'bottom' },
+              h('button', {
+                type: 'button',
+                className: 'dshwt-hdr-btn',
+                disabled: starting,
+                title: hasNativeTooltip ? undefined : primaryTitle,
+                'aria-label': primaryTitle,
+                onClick: () => void runAction(primary),
+              },
+              h(ActionIcon, { kind: primary.icon ?? 'tool', size: 15, outline: true }),
+              h('span', { className: 'dshwt-hdr-label' }, primary.name),
+              primaryRunning ? h('span', { className: 'dshwt-hdr-dot', title: t('header.actions.running') }) : null))
+            : primary !== null
+              ? h('div', { className: 'dshwt-hdr-split' },
+                h(Hint, { label: primaryTitle, side: 'bottom' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dshwt-hdr-btn',
+                    disabled: starting,
+                    title: hasNativeTooltip ? undefined : primaryTitle,
+                    'aria-label': primaryTitle,
+                    onClick: () => void runAction(primary),
+                  },
+                  h(ActionIcon, { kind: primary.icon ?? 'tool', size: 15, outline: true }),
+                  h('span', { className: 'dshwt-hdr-label' }, primary.name),
+                  primaryRunning ? h('span', { className: 'dshwt-hdr-dot', title: t('header.actions.running') }) : null)),
+                h(Hint, { label: t('header.actions.menu'), side: 'bottom' },
+                  h('button', {
+                    type: 'button',
+                    className: 'dshwt-hdr-caret',
+                    disabled: starting,
+                    title: hasNativeTooltip ? undefined : t('header.actions.menu'),
+                    'aria-label': t('header.actions.menu'),
+                    'aria-haspopup': 'menu',
+                    'aria-expanded': menuOpen,
+                    onClick: () => {
+                      reconcileNativeTerminals(ctx)
+                      setMenuOpen(v => !v)
+                    },
+                  },
+                  otherRunning ? h('span', { className: 'dshwt-hdr-dot', title: t('header.actions.running') }) : null,
+                  h(ChevronIcon, { dir: menuOpen ? 'up' : 'down', size: 10 }))))
+              : null,
+          menuPortal)
+      }
     }
 
     /** ---- session menu rows ---- */
@@ -2872,11 +3524,7 @@ window.__ModuleLoader__.load({
 
     function sessionCwdOf(ctx, sessionId) {
       const summary = ctx.get('sessions')?.list?.getSnapshot?.()?.byId?.[sessionId]
-      if (summary === undefined || summary === null) return null
-      const projected = summary.projections?.workingDirectory
-      if (typeof projected === 'string' && projected.length > 0) return projected
-      if (typeof summary.cwd === 'string' && summary.cwd.length > 0) return summary.cwd
-      return null
+      return extractSummaryCwd(summary)
     }
 
     function SessionMenuRows(ctx) {
@@ -2930,13 +3578,230 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** ---- locale plumbing ---- */
+    /** ---- locale & shared log state plumbing ---- */
     const NS_STATE = {
       dicts: DICTS,
       ctx: null,
       ctxLocale: null,
       boundTranslate: null,
       listeners: new Set(),
+      envListeners: new Set(),
+      drawer: { op: null, open: false, minimized: false },
+      drawerListeners: new Set(),
+      sessionLogs: new Map(),
+      rightLogTabRegistered: false,
+      nativeTerminals: new Map(),
+      terminalListeners: new Set(),
+    }
+
+    function notifyNativeTerminalsChanged() {
+      for (const listener of [...NS_STATE.terminalListeners]) {
+        try { listener() } catch { /* ignore */ }
+      }
+    }
+
+    function isTerminalEntryAlive(sidebarRight, sessionId, entry) {
+      if (!sidebarRight || typeof sidebarRight.tabsIn !== 'function') return false
+      const tabs = sidebarRight.tabsIn(sessionId) ?? []
+      const stillOpen = tabs.some(tab => tab.id === entry.tabId && tab.kind === 'terminal')
+      if (!stillOpen) return false
+      const st = entry.view?.state?.getSnapshot?.()
+      if (st) {
+        if (st.phase === 'closed' || st.phase === 'failed') return false
+        if (st.info?.state === 'exited' || st.info?.state === 'failed') return false
+      }
+      return true
+    }
+
+    function reconcileNativeTerminals(ctx) {
+      const sidebarRight = ctx?.get?.('sidebarRight')
+      let changed = false
+      for (const [sid, actionMap] of [...NS_STATE.nativeTerminals.entries()]) {
+        for (const [actionName, entries] of [...actionMap.entries()]) {
+          const alive = []
+          for (const entry of entries) {
+            if (isTerminalEntryAlive(sidebarRight, sid, entry)) {
+              alive.push(entry)
+            } else {
+              try { entry.unsub?.() } catch { /* ignore */ }
+              changed = true
+            }
+          }
+          if (alive.length === 0) actionMap.delete(actionName)
+          else if (alive.length !== entries.length) actionMap.set(actionName, alive)
+        }
+        if (actionMap.size === 0) NS_STATE.nativeTerminals.delete(sid)
+      }
+      if (changed) notifyNativeTerminalsChanged()
+    }
+
+    function trackNativeTerminal(ctx, sessionId, actionName, tabId, contentId, termView) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return
+      if (typeof actionName !== 'string' || actionName.length === 0) return
+      let actionMap = NS_STATE.nativeTerminals.get(sessionId)
+      if (!actionMap) {
+        actionMap = new Map()
+        NS_STATE.nativeTerminals.set(sessionId, actionMap)
+      }
+      const list = actionMap.get(actionName) ?? []
+      const unsub = termView?.state?.subscribe?.(() => reconcileNativeTerminals(ctx))
+      list.push({ tabId, contentId, view: termView, unsub })
+      actionMap.set(actionName, list)
+      notifyNativeTerminalsChanged()
+    }
+
+    function focusNativeTerminal(ctx, sessionId, actionName) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return false
+      if (typeof actionName !== 'string' || actionName.length === 0) return false
+      reconcileNativeTerminals(ctx)
+      const entries = NS_STATE.nativeTerminals.get(sessionId)?.get(actionName)
+      if (!entries || entries.length === 0) return false
+      const entry = entries[entries.length - 1]
+      const sidebarRight = ctx?.get?.('sidebarRight')
+      if (!isTerminalEntryAlive(sidebarRight, sessionId, entry)) {
+        reconcileNativeTerminals(ctx)
+        return false
+      }
+      try {
+        if (typeof sidebarRight.isExpanded === 'function' && !sidebarRight.isExpanded()) {
+          sidebarRight.toggleExpanded?.()
+        }
+        if (typeof sidebarRight.focusIn === 'function') {
+          sidebarRight.focusIn(sessionId, entry.tabId)
+          return true
+        }
+        if (typeof sidebarRight.focus === 'function') {
+          sidebarRight.focus(entry.tabId)
+          return true
+        }
+      } catch {
+        return false
+      }
+      return false
+    }
+
+    function clearAllNativeTerminals() {
+      for (const actionMap of NS_STATE.nativeTerminals.values()) {
+        for (const entries of actionMap.values()) {
+          for (const entry of entries) {
+            try { entry.unsub?.() } catch { /* ignore */ }
+          }
+        }
+      }
+      NS_STATE.nativeTerminals.clear()
+      notifyNativeTerminalsChanged()
+    }
+
+    function snapshotNativeTerminals(ctx, sessionId) {
+      const map = new Map()
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return map
+      const actionMap = NS_STATE.nativeTerminals.get(sessionId)
+      if (!actionMap || actionMap.size === 0) return map
+      const sidebarRight = ctx?.get?.('sidebarRight')
+      for (const [actionName, entries] of actionMap.entries()) {
+        const alive = entries.filter(entry => isTerminalEntryAlive(sidebarRight, sessionId, entry))
+        if (alive.length > 0) map.set(actionName, alive)
+      }
+      return map
+    }
+
+    function useNativeTerminalActions(ctx, sessionId) {
+      const [running, setRunning] = useState(() => snapshotNativeTerminals(ctx, sessionId))
+      useEffect(() => {
+        setRunning(snapshotNativeTerminals(ctx, sessionId))
+        const onUpdate = () => setRunning(snapshotNativeTerminals(ctx, sessionId))
+        NS_STATE.terminalListeners.add(onUpdate)
+        return () => { NS_STATE.terminalListeners.delete(onUpdate) }
+      }, [ctx, sessionId])
+      return running
+    }
+
+    function notifyEnvChanged() {
+      for (const listener of [...NS_STATE.envListeners]) {
+        try { listener() } catch { /* ignore */ }
+      }
+    }
+
+    function notifyDrawerChanged() {
+      const snap = { ...NS_STATE.drawer }
+      for (const listener of [...NS_STATE.drawerListeners]) {
+        try { listener(snap) } catch { /* ignore */ }
+      }
+    }
+
+    function readSessionLogs(sessionId) {
+      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__'
+      const bucket = NS_STATE.sessionLogs.get(key)
+      return bucket ? { ops: [...bucket.ops], activeId: bucket.activeId } : { ops: [], activeId: null }
+    }
+
+    function recordSessionOp(sessionId, op) {
+      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__'
+      const prev = NS_STATE.sessionLogs.get(key) ?? { ops: [], activeId: null }
+      const filtered = prev.ops.filter(item => item.id !== op.id)
+      const ops = [op, ...filtered].slice(0, 10)
+      NS_STATE.sessionLogs.set(key, { ops, activeId: op.id })
+      notifyDrawerChanged()
+    }
+
+    function selectSessionOp(sessionId, opId) {
+      const key = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : '__global__'
+      const prev = NS_STATE.sessionLogs.get(key)
+      if (!prev) return
+      NS_STATE.sessionLogs.set(key, { ops: prev.ops, activeId: opId })
+      notifyDrawerChanged()
+    }
+
+    function useSessionLogs(sessionId) {
+      const [bucket, setBucket] = useState(() => readSessionLogs(sessionId))
+      useEffect(() => {
+        setBucket(readSessionLogs(sessionId))
+        const onUpdate = () => setBucket(readSessionLogs(sessionId))
+        NS_STATE.drawerListeners.add(onUpdate)
+        return () => { NS_STATE.drawerListeners.delete(onUpdate) }
+      }, [sessionId])
+      return bucket
+    }
+
+    function openActionLog(ctx, sessionId, op) {
+      recordSessionOp(sessionId, op)
+      const sidebarRight = ctx?.get?.('sidebarRight')
+      if (NS_STATE.rightLogTabRegistered && typeof sidebarRight?.openTab === 'function') {
+        try {
+          sidebarRight.openTab(LOG_TAB_KIND)
+          // Ensure fallback floating drawer stays closed when docked inside the right sidebar
+          if (NS_STATE.drawer.open) closeLogDrawer()
+          return
+        } catch {
+          // fall through to overlay fallback when sidebarRight cannot open for this surface
+        }
+      }
+      openLogDrawer(op)
+    }
+
+    function openLogDrawer(op) {
+      NS_STATE.drawer = { op, open: true, minimized: false }
+      notifyDrawerChanged()
+    }
+
+    function closeLogDrawer() {
+      NS_STATE.drawer = { ...NS_STATE.drawer, open: false, minimized: false }
+      notifyDrawerChanged()
+    }
+
+    function toggleMinimizeLogDrawer() {
+      NS_STATE.drawer = { ...NS_STATE.drawer, minimized: !NS_STATE.drawer.minimized }
+      notifyDrawerChanged()
+    }
+
+    function useLogDrawerState() {
+      const [state, setState] = useState(() => ({ ...NS_STATE.drawer }))
+      useEffect(() => {
+        setState({ ...NS_STATE.drawer })
+        NS_STATE.drawerListeners.add(setState)
+        return () => { NS_STATE.drawerListeners.delete(setState) }
+      }, [])
+      return state
     }
 
     function normalizeLang(tag) {
@@ -3096,20 +3961,75 @@ window.__ModuleLoader__.load({
           label: () => translateKey('panel.title'),
         }, WorktreePanel)), 'dsh-worktree-env: main panel'))
 
-        disposers.push(ctx.effect(() => {
-          const tabs = ctx.get('sidebarRightTabs')
+        disposers.push(ctx.effect(() => ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+          name: 'conversation.session.header.utilities',
+          id: 'dsh-worktree-env-actions',
+          order: -9,
+          locale: NS,
+        }, SessionHeaderActions(ctx))), 'dsh-worktree-env: header actions'))
+
+        // On-demand right-sidebar log tab: omits `guide` so it stays off the sidebar launcher
+        // and only opens when the user runs an action (or views logs) from the top bar.
+        const mountRightLogTab = (scope) => {
+          const tabs = scope.get?.('sidebarRightTabs') ?? scope.sidebarRightTabs
           if (tabs === undefined || typeof tabs.register !== 'function') return () => {}
           const disposeTab = tabs.register({
-            id: 'dsh-worktree-env',
-            kind: 'dsh-worktree-env',
-            priority: 'plugin',
-            title: () => translateKey('tab.title'),
+            id: LOG_TAB_ID,
+            kind: LOG_TAB_KIND,
+            priority: 'extension',
+            keepMounted: true,
+            title: () => translateKey('logs.title'),
           })
-          const disposePane = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-            name: 'sidebar.right.pane.tab', key: 'dsh-worktree-env', locale: NS,
-          }, RightPane))
-          return () => { disposePane(); disposeTab() }
-        }, 'dsh-worktree-env: right tab'))
+          const disposePane = scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
+            name: 'sidebar.right.pane.tab',
+            key: LOG_TAB_ID,
+            locale: NS,
+          }, ActionLogPane(ctx)))
+          const disposeTitle = scope.slots.inject('sidebar.right.pane.tab.title', () => scope.slots.register({
+            name: 'sidebar.right.pane.tab.title',
+            key: LOG_TAB_ID,
+            locale: NS,
+          }, ActionLogTabTitle))
+          NS_STATE.rightLogTabRegistered = true
+          return () => {
+            NS_STATE.rightLogTabRegistered = false
+            disposeTitle()
+            disposePane()
+            disposeTab()
+          }
+        }
+        if (typeof ctx.inject === 'function') {
+          const scope = ctx.inject(['sidebarRightTabs'], (child) => {
+            child.effect(() => mountRightLogTab(child), 'dsh-worktree-env: right log tab')
+          })
+          if (typeof scope?.dispose === 'function') disposers.push(() => scope.dispose())
+        } else {
+          disposers.push(ctx.effect(() => mountRightLogTab(ctx), 'dsh-worktree-env: right log tab'))
+        }
+
+        const watchSidebarTerminals = (scope) => {
+          const sidebarRight = scope.get?.('sidebarRight') ?? scope.sidebarRight
+          const unsub = sidebarRight?.openTabs?.subscribe?.(() => reconcileNativeTerminals(ctx))
+          return () => {
+            try { unsub?.() } catch { /* ignore */ }
+          }
+        }
+        if (typeof ctx.inject === 'function') {
+          const scope = ctx.inject(['sidebarRight'], (child) => {
+            child.effect(() => watchSidebarTerminals(child), 'dsh-worktree-env: terminal tabs')
+          })
+          if (typeof scope?.dispose === 'function') disposers.push(() => scope.dispose())
+        } else {
+          disposers.push(ctx.effect(() => watchSidebarTerminals(ctx), 'dsh-worktree-env: terminal tabs'))
+        }
+        disposers.push(() => clearAllNativeTerminals())
+
+        disposers.push(ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'dsh-worktree-env-logs',
+          order: 60,
+          locale: NS,
+        }, LogDrawerOverlay)), 'dsh-worktree-env: log overlay'))
 
         disposers.push(ctx.effect(() => ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
           name: 'sidebar.workspaces.session.menu.item', id: 'dsh-worktree-env-menu', order: 350, locale: NS,
